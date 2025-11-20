@@ -14,7 +14,7 @@ set(VE_SOURCES
 set(VE_HEADERS
     src/eva-runtime.h
     src/error.h
-    src/templateHelper.h
+    src/eva-native-factory.h
 )
 
 # Create static library
