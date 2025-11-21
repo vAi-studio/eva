@@ -1,7 +1,6 @@
 #ifndef EVA_RUNTIME_H
 #define EVA_RUNTIME_H
 
-#include <vulkan/vulkan_core.h>
 #include <vector>
 #include <map>
 #include <string>
@@ -15,8 +14,31 @@
 #include "eva-enums.h"
 
 
+#define EVA_ATTACHMENT_UNUSED              (~0U)
+#define EVA_FALSE                          0U
+#define EVA_LOD_CLAMP_NONE                 1000.0F
+#define EVA_QUEUE_FAMILY_IGNORED           (~0U)
+#define EVA_REMAINING_ARRAY_LAYERS         (~0U)
+#define EVA_REMAINING_MIP_LEVELS           (~0U)
+#define EVA_SUBPASS_EXTERNAL               (~0U)
+#define EVA_TRUE                           1U
+#define EVA_WHOLE_SIZE                     (~0ULL)
+#define EVA_MAX_MEMORY_TYPES               32U
+#define EVA_MAX_PHYSICAL_DEVICE_NAME_SIZE  256U
+#define EVA_UUID_SIZE                      16U
+#define EVA_MAX_EXTENSION_NAME_SIZE        256U
+#define EVA_MAX_DESCRIPTION_SIZE           256U
+#define EVA_MAX_MEMORY_HEAPS               16U
+
 
 namespace eva {
+
+typedef uint32_t Bool32;
+typedef uint64_t DeviceAddress;
+typedef uint64_t DeviceSize;
+typedef uint32_t Flags;
+typedef uint32_t SampleMask;
+
 
 class Runtime;
 class Device;
@@ -113,17 +135,18 @@ struct ImageMemoryBarrier;
 struct CopyRegion;
 
 struct WindowCreateInfo;
+struct AsBuildSizesInfo;
 struct AsCreateInfo;
 // struct AsSizeQueryInfo;
 // struct AsGeometryInfo;
-struct AsBuildInfoTriangles;
-struct AsBuildInfoAabbs;
-struct AsBuildInfoInstances;
-using AsBuildInfo22 = std::variant<
-    AsBuildInfoTriangles,
-    AsBuildInfoAabbs,
-    AsBuildInfoInstances
->;
+// struct AsBuildInfoTriangles;
+// struct AsBuildInfoAabbs;
+// struct AsBuildInfoInstances;
+// using AsBuildInfo22 = std::variant<
+//     AsBuildInfoTriangles,
+//     AsBuildInfoAabbs,
+//     AsBuildInfoInstances
+// >;
 struct AsBuildInfo;
 struct ShaderBindingTable;
 
@@ -203,7 +226,6 @@ class Runtime {
     Runtime(const Runtime&) = delete;
     Runtime& operator=(const Runtime&) = delete;
     Device createDevice(const DeviceSettings& settings);
-    Device createDevice(VkPhysicalDevice pd, const DeviceSettings& settings);
     
 public:
     static Runtime& get();    // singleton pattern
@@ -228,12 +250,12 @@ public:
     Queue queue(QueueType type, uint32_t index=0) const;
     QueueSelector queue(uint32_t index=0) const;
 
-    CommandPool createCommandPool(QueueType type, VkCommandPoolCreateFlags flags=0);
+    CommandPool createCommandPool(QueueType type, COMMAND_POOL_CREATE flags=COMMAND_POOL_CREATE::NONE);
     CommandPool setDefalutCommandPool(QueueType type, CommandPool cmdPool);
-    CommandBuffer newCommandBuffer(QueueType type, VkCommandPoolCreateFlags poolFlags=0);
-
-    Fence createFence(VkFenceCreateFlags flags=0);
-    VkResult waitFences(std::vector<Fence> fences, bool waitAll, uint64_t timeout=uint64_t(-1));
+    CommandBuffer newCommandBuffer(QueueType type, COMMAND_POOL_CREATE poolFlags=COMMAND_POOL_CREATE::NONE);
+    
+    Fence createFence(bool signaled=false);
+    Result waitFences(std::vector<Fence> fences, bool waitAll, uint64_t timeout=uint64_t(-1));
     void resetFences(std::vector<Fence> fences);
     Semaphore createSemaphore();
     template <int N> auto createSemaphores()
@@ -259,7 +281,7 @@ public:
     uint32_t shaderGroupBaseAlignment() const;
     uint32_t asBufferOffsetAlignment() const;
     uint32_t minAccelerationStructureScratchOffsetAlignment() const;
-    VkAccelerationStructureBuildSizesInfoKHR getBuildSizesInfo(const AsBuildInfo& info) const;
+    AsBuildSizesInfo getBuildSizesInfo(const AsBuildInfo& info) const;
     AccelerationStructure createAccelerationStructure(const AsCreateInfo& info) ;
     
 };
@@ -330,7 +352,7 @@ public:
     }
 
     CommandBuffer begin(
-        VkCommandBufferUsageFlags flags=0
+        COMMAND_BUFFER_USAGE flags=COMMAND_BUFFER_USAGE::NONE
     );
 
     CommandBuffer end();
@@ -341,7 +363,7 @@ public:
 
     CommandBuffer bindDescSets(
         PipelineLayout layout, 
-        VkPipelineBindPoint bindPoint,
+        PIPELINE_BIND_POINT bindPoint,
         std::vector<DescriptorSet> descSets, 
         uint32_t firstSet=0
     );
@@ -353,7 +375,7 @@ public:
 
     CommandBuffer setPushConstants(
         PipelineLayout layout, 
-        VkShaderStageFlags stageFlags, 
+        SHADER_STAGE stageFlags, 
         uint32_t offset, 
         uint32_t size,
         const void* values
@@ -378,7 +400,7 @@ public:
         Buffer dst, 
         uint64_t srcOffset = 0, 
         uint64_t dstOffset = 0, 
-        uint64_t size = VK_WHOLE_SIZE
+        uint64_t size = EVA_WHOLE_SIZE
     );
 
     CommandBuffer copyBuffer(
@@ -430,10 +452,6 @@ public:
     );
 
     CommandBuffer buildAccelerationStructures(
-        const AsBuildInfoInstances& info
-    );
-
-    CommandBuffer buildAccelerationStructures(
         const AsBuildInfo& info
     );
 
@@ -447,7 +465,7 @@ class Fence {
     VULKAN_CLASS_COMMON2(Fence)
 public:
 
-    VkResult wait(bool autoReset = false, uint64_t timeout=uint64_t(-1)) const;
+    Result wait(bool autoReset = false, uint64_t timeout=uint64_t(-1)) const;
     void reset() const;
     bool isSignaled() const;
 };
@@ -466,7 +484,6 @@ class ShaderModule {
     VULKAN_CLASS_COMMON2(ShaderModule)
 public:
 
-    VkPipelineShaderStageCreateInfo stage() const;
     bool hasReflect() const;
     void discardReflect() ;
     PipelineLayoutDesc extractPipelineLayoutDesc() const;
@@ -504,34 +521,29 @@ public:
     
     uint8_t* map(
         uint64_t offset=0, 
-        uint64_t size=VK_WHOLE_SIZE
+        uint64_t size=EVA_WHOLE_SIZE
     );
  
     void flush(
         uint64_t offset=0, 
-        uint64_t size=VK_WHOLE_SIZE
+        uint64_t size=EVA_WHOLE_SIZE
     ) const;
 
     void invalidate(
         uint64_t offset=0, 
-        uint64_t size=VK_WHOLE_SIZE
+        uint64_t size=EVA_WHOLE_SIZE
     ) const;
     
     void unmap();
     uint64_t size() const;
-    VkBufferUsageFlags usage() const;
-    VkMemoryPropertyFlags memoryProperties() const;
+    BUFFER_USAGE usage() const;
+    MEMORY_PROPERTY memoryProperties() const;
 
-    VkDescriptorBufferInfo descInfo(
-        uint64_t offset=0, 
-        uint64_t size=VK_WHOLE_SIZE
-    ) const;
-
-    VkDeviceAddress deviceAddress() const;
+    DeviceAddress deviceAddress() const;
 
     BufferRange operator()(
         uint64_t offset=0, 
-        uint64_t size=VK_WHOLE_SIZE
+        uint64_t size=EVA_WHOLE_SIZE
     );
 
 };
@@ -566,10 +578,10 @@ class DescriptorSetLayout {
     VULKAN_CLASS_COMMON2(DescriptorSetLayout)
 public:
 
-    const VkDescriptorSetLayoutBinding& bindingInfo(
-        uint32_t bindingId, 
-        bool exact=true
-    ) const;
+    // const VkDescriptorSetLayoutBinding& bindingInfo(
+    //     uint32_t bindingId, 
+    //     bool exact=true
+    // ) const;
         
     // const std::map<uint32_t, VkDescriptorSetLayoutBinding>& bindingInfos() const;
 };
@@ -643,11 +655,11 @@ struct WindowCreateInfo {
     bool hidden = false;
 
     Device device;
-    VkImageUsageFlags swapChainImageUsage;
+    IMAGE_USAGE swapChainImageUsage;
     uint32_t minSwapChainImages = 0;
-    VkFormat swapChainImageFormat = VK_FORMAT_B8G8R8A8_SRGB;
-    VkColorSpaceKHR swapChainImageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
-    VkPresentModeKHR preferredPresentMode = VK_PRESENT_MODE_FIFO_KHR;
+    FORMAT swapChainImageFormat = FORMAT::B8G8R8A8_SRGB;
+    COLOR_SPACE swapChainImageColorSpace = COLOR_SPACE::SRGB_NONLINEAR;
+    PRESENT_MODE preferredPresentMode = PRESENT_MODE::FIFO;
 };
 
 
@@ -676,7 +688,7 @@ public:
 class AccelerationStructure {
     VULKAN_CLASS_COMMON2(AccelerationStructure)
 public:
-    VkDeviceAddress deviceAddress() const;
+    DeviceAddress deviceAddress() const;
 };
 
 
@@ -813,7 +825,7 @@ struct BufferDescriptor {
     uint64_t size;
 
     BufferDescriptor(Buffer buffer) 
-    : buffer(buffer), offset(0), size(VK_WHOLE_SIZE) {}
+    : buffer(buffer), offset(0), size(EVA_WHOLE_SIZE) {}
 
     BufferDescriptor(BufferRange range);
 };
@@ -872,18 +884,6 @@ struct CopyRegion {
 
 
 
-/**/
-constexpr inline VkDescriptorPoolSize operator<=(
-    VkDescriptorType type, int count)
-{
-    return {
-        .type = type,
-        .descriptorCount = (uint32_t)count,
-    };
-}
-
-
-
 
 
 using SpvBlob = std::pair<uint32_t*, size_t>; // (data, size in bytes)
@@ -929,12 +929,27 @@ inline auto constant_id(bool v)
 }
 
 
+struct SpecializationMapEntry {
+    uint32_t    constantID;
+    uint32_t    offset;
+    size_t      size;
+};
+
+
+struct SpecializationInfo {
+    uint32_t                        mapEntryCount;
+    const SpecializationMapEntry*   pMapEntries;
+    size_t                          dataSize;
+    const void*                     pData;
+};
+
+
 class SpecializationConstant {
     std::map<uint32_t, std::vector<uint8_t>> orderedConstants; // key: constantID, value: bytes of the constant value
 
-    mutable std::optional<std::vector<VkSpecializationMapEntry>> cachedMapEntries;
+    mutable std::optional<std::vector<SpecializationMapEntry>> cachedMapEntries;
     mutable std::optional<std::vector<uint8_t>> cachedData;
-    mutable std::optional<VkSpecializationInfo> cachedSpecInfo;
+    mutable std::optional<SpecializationInfo> cachedSpecInfo;
     
     void buildCache() const;
 public:
@@ -971,7 +986,7 @@ public:
     
     bool empty() const { return orderedConstants.empty(); }
 
-    const VkSpecializationInfo* getInfo() const
+    const SpecializationInfo* getInfo() const
     {
         if (empty())  return nullptr;
         buildCache();
@@ -1043,30 +1058,38 @@ struct RaytracingPipelineCreateInfo {
 
 struct BufferCreateInfo {
     uint64_t size;
-    VkBufferUsageFlags usage;
-    VkMemoryPropertyFlags reqMemProps;
+    BUFFER_USAGE usage;
+    MEMORY_PROPERTY reqMemProps;
 };
 
 
 struct ImageCreateInfo {
-    VkImageCreateFlags flags = 0;
-    VkFormat format;
+    IMAGE_CREATE flags = IMAGE_CREATE::NONE;
+    FORMAT format;
     struct Extent {
         uint32_t width;
         uint32_t height = 1;
         uint32_t depth = 1;
     } extent;
     uint32_t arrayLayers = 1;
-    VkImageUsageFlags usage;
+    IMAGE_USAGE usage;
     bool preInitialized = false; // if true, initialLayout is VK_IMAGE_LAYOUT_PREINITIALIZED, else VK_IMAGE_LAYOUT_UNDEFINED
-    VkMemoryPropertyFlags reqMemProps = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    MEMORY_PROPERTY reqMemProps = MEMORY_PROPERTY::DEVICE_LOCAL;
+};
+
+
+struct ComponentMapping {
+    COMPONENT_SWIZZLE r = COMPONENT_SWIZZLE::IDENTITY;
+    COMPONENT_SWIZZLE g = COMPONENT_SWIZZLE::IDENTITY;
+    COMPONENT_SWIZZLE b = COMPONENT_SWIZZLE::IDENTITY;
+    COMPONENT_SWIZZLE a = COMPONENT_SWIZZLE::IDENTITY;
 };
 
 
 struct ImageViewDesc {
-    VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_MAX_ENUM;
-    VkFormat format = VK_FORMAT_MAX_ENUM;
-    VkComponentMapping components = {};
+    IMAGE_VIEW_TYPE viewType = IMAGE_VIEW_TYPE::MAX_ENUM;
+    FORMAT format = FORMAT::MAX_ENUM;
+    ComponentMapping components = {};
     // VkImageSubresourceRange subresourceRange;
 
     bool operator==(const ImageViewDesc& other) const {
@@ -1081,21 +1104,21 @@ struct ImageViewDesc {
 
 
 struct SamplerCreateInfo {
-    VkFilter magFilter = VK_FILTER_LINEAR;
-    VkFilter minFilter = VK_FILTER_LINEAR;
-    VkSamplerMipmapMode mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    VkSamplerAddressMode addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    VkSamplerAddressMode addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    VkSamplerAddressMode addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    FILTER magFilter = FILTER::LINEAR;
+    FILTER minFilter = FILTER::LINEAR;
+    SAMPLER_MIPMAP_MODE mipmapMode = SAMPLER_MIPMAP_MODE::LINEAR;
+    SAMPLER_ADDRESS_MODE addressModeU = SAMPLER_ADDRESS_MODE::REPEAT;
+    SAMPLER_ADDRESS_MODE addressModeV = SAMPLER_ADDRESS_MODE::REPEAT;
+    SAMPLER_ADDRESS_MODE addressModeW = SAMPLER_ADDRESS_MODE::REPEAT;
     float mipLodBias = 0.0f;
-    VkBool32 anisotropyEnable = VK_FALSE;
+    Bool32 anisotropyEnable = EVA_FALSE;
     float maxAnisotropy = 1.0f;
-    VkBool32 compareEnable = VK_FALSE;
-    VkCompareOp compareOp = VK_COMPARE_OP_ALWAYS;
+    Bool32 compareEnable = EVA_FALSE;
+    COMPARE_OP compareOp = COMPARE_OP::ALWAYS;
     float minLod = 0.0f;
-    float maxLod = VK_LOD_CLAMP_NONE;
-    VkBorderColor borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-    VkBool32 unnormalizedCoordinates = VK_FALSE;
+    float maxLod = EVA_LOD_CLAMP_NONE;
+    BORDER_COLOR borderColor = BORDER_COLOR::INT_OPAQUE_BLACK;
+    Bool32 unnormalizedCoordinates = EVA_FALSE;
 };
 
 
@@ -1105,8 +1128,24 @@ inline ImageView Image::view() const
 }
 
 
+struct DescriptorPoolSize {
+    DESCRIPTOR_TYPE type;
+    uint32_t descriptorCount;
+};
+
+
+constexpr inline DescriptorPoolSize operator<=(
+    DESCRIPTOR_TYPE type, int count)
+{
+    return {
+        .type = type,
+        .descriptorCount = (uint32_t)count,
+    };
+}
+
+
 struct DescriptorPoolCreateInfo {
-    std::vector<VkDescriptorPoolSize> maxTypes;
+    std::vector<DescriptorPoolSize> maxTypes;
     uint32_t maxSets;
 };
 
@@ -1165,10 +1204,10 @@ struct BufferRange {
     
     BufferRange(Buffer buffer, 
         uint64_t offset=0, 
-        uint64_t size=VK_WHOLE_SIZE)
+        uint64_t size=EVA_WHOLE_SIZE)
     : buffer(buffer)
     , offset(offset)
-    , size(size==VK_WHOLE_SIZE ? buffer.size() - offset : size) {}
+    , size(size==EVA_WHOLE_SIZE ? buffer.size() - offset : size) {}
 
     BufferRange(const BufferRange&) = default;
     BufferRange(BufferRange&& other) = default;
@@ -1200,22 +1239,17 @@ struct BufferRange {
         buffer.invalidate(offset, size);
     }
 
-    VkBufferUsageFlags usage() const
+    BUFFER_USAGE usage() const
     {
         return buffer.usage();
     }
 
-    VkMemoryPropertyFlags memoryProperties() const
+    MEMORY_PROPERTY memoryProperties() const
     {
         return buffer.memoryProperties();
     }
 
-    VkDescriptorBufferInfo descInfo() const
-    {
-        return buffer.descInfo(offset, size);
-    }
-
-    VkDeviceAddress deviceAddress() const
+    DeviceAddress deviceAddress() const
     {
         return buffer.deviceAddress() + offset;
     }
@@ -1224,7 +1258,7 @@ struct BufferRange {
 
 inline BufferRange Buffer::operator()(uint64_t offset, uint64_t size)
 {    
-    if (size == VK_WHOLE_SIZE) 
+    if (size == EVA_WHOLE_SIZE) 
     {
         // ASSERT_(offset < this->size());
         size = this->size() - offset;
@@ -1343,7 +1377,7 @@ struct BufferMemoryBarrier {
     QueueType pairedQueue = queue_max;
     // const Buffer& buffer;
     // uint64_t offset = 0;
-    // uint64_t size = VK_WHOLE_SIZE;
+    // uint64_t size = EVA_WHOLE_SIZE;
     BufferRange buffer;
 
     BufferMemoryBarrier(Buffer buffer) : buffer(buffer) {}
@@ -1643,82 +1677,89 @@ struct StridedBuffer {
 };
 
 
+struct AsBuildSizesInfo {
+    DeviceSize accelerationStructureSize;
+    DeviceSize updateScratchSize;
+    DeviceSize buildScratchSize;
+};
+
+
 struct AsCreateInfo {
-    VkAccelerationStructureTypeKHR asType;  
+    ACCELERATION_STRUCTURE_TYPE asType;  
     BufferRange internalBuffer;     // offset and size required for AS data storage
     uint64_t size;                  // Although it could be fed via internalBuffer.size, it is explicitly specified to prevent user mistakes
 };
 
 
-struct AsBuildInfoTriangles {
-    VkBuildAccelerationStructureFlagsKHR buildFlags;
-    AccelerationStructure srcAs;
-    AccelerationStructure dstAs;
-    BufferRange scratchBuffer;      // offset required, size ignored
+// struct AsBuildInfoTriangles {
+//     BUILD_ACCELERATION_STRUCTURE buildFlags;
+//     AccelerationStructure srcAs;
+//     AccelerationStructure dstAs;
+//     BufferRange scratchBuffer;      // offset required, size ignored
 
-    struct Geometry {
-        VkGeometryFlagsKHR flags;
-        uint32_t triangleCount;
-        uint32_t vertexCount;
+//     struct Geometry {
+//         GEOMETRY flags;
+//         uint32_t triangleCount;
+//         uint32_t vertexCount;
 
-        StridedBuffer vertexInput;
-        StridedBuffer indexInput;  // stride must be 0, 2, or 4
-        BufferRange transformBuffer;
-    };
-    std::vector<Geometry> geometries;
+//         StridedBuffer vertexInput;
+//         StridedBuffer indexInput;  // stride must be 0, 2, or 4
+//         BufferRange transformBuffer;
+//     };
+//     std::vector<Geometry> geometries;
 
-    struct {
-        StridedBuffer vertexInput;
-        StridedBuffer indexInput;
-        // StridedBuffer transformInput;
-    } common;
-};
-
-
-struct AsBuildInfoAabbs {
-    VkBuildAccelerationStructureFlagsKHR buildFlags;
-    AccelerationStructure srcAs;
-    AccelerationStructure dstAs;
-    BufferRange scratchBuffer;    
-
-    struct Geometry {
-        VkGeometryFlagsKHR flags;
-        uint32_t aabbCount;
-        StridedBuffer aabbInput;
-    };
-    std::vector<Geometry> geometries;
-
-    struct {
-        StridedBuffer aabbInput;
-    } common;
-};
+//     struct {
+//         StridedBuffer vertexInput;
+//         StridedBuffer indexInput;
+//         // StridedBuffer transformInput;
+//     } common;
+// };
 
 
-struct AsBuildInfoInstances {
-    VkBuildAccelerationStructureFlagsKHR buildFlags;
-    AccelerationStructure srcAs;
-    AccelerationStructure dstAs;
-    BufferRange scratchBuffer;    
+// struct AsBuildInfoAabbs {
+//     VkBuildAccelerationStructureFlagsKHR buildFlags;
+//     AccelerationStructure srcAs;
+//     AccelerationStructure dstAs;
+//     BufferRange scratchBuffer;    
 
-    // uint32_t instanceCount;
-    // StridedBuffer instanceInput;
+//     struct Geometry {
+//         GEOMETRY flags;
+//         uint32_t aabbCount;
+//         StridedBuffer aabbInput;
+//     };
+//     std::vector<Geometry> geometries;
 
-    struct Geometry {
-        VkGeometryFlagsKHR flags;
-        uint32_t instanceCount;
-        StridedBuffer instanceInput;
-    };
+//     struct {
+//         StridedBuffer aabbInput;
+//     } common;
+// };
 
-    std::vector<Geometry> geometries;
-    struct {
-        StridedBuffer instanceInput;
-    } common;
-};
+
+// struct AsBuildInfoInstances {
+//     VkBuildAccelerationStructureFlagsKHR buildFlags;
+//     AccelerationStructure srcAs;
+//     AccelerationStructure dstAs;
+//     BufferRange scratchBuffer;    
+
+//     // uint32_t instanceCount;
+//     // StridedBuffer instanceInput;
+
+//     struct Geometry {
+//         GEOMETRY flags;
+//         uint32_t instanceCount;
+//         StridedBuffer instanceInput;
+//     };
+
+//     std::vector<Geometry> geometries;
+//     struct {
+//         StridedBuffer instanceInput;
+//     } common;
+// };
 
 
 struct AsBuildInfo {
-    VkBuildAccelerationStructureFlagsKHR buildFlags;
-    VkGeometryTypeKHR geometryType;
+    BUILD_ACCELERATION_STRUCTURE buildFlags;
+    GEOMETRY_TYPE geometryType;
     std::vector<uint32_t> primitiveCounts; // primitive count for each geometry
     AccelerationStructure srcAs;
     AccelerationStructure dstAs;
@@ -1730,7 +1771,7 @@ struct AsBuildInfo {
         std::vector<uint32_t> vertexCounts;
 
         struct Geometry {
-            VkGeometryFlagsKHR flags;
+            GEOMETRY flags;
             StridedBuffer vertexInput;
             StridedBuffer indexInput;  // stride must be 0, 2, or 4
             BufferRange transformBuffer;
@@ -1742,7 +1783,7 @@ struct AsBuildInfo {
         StridedBuffer aabbInput;
 
         struct Geometry {
-            VkGeometryFlagsKHR flags;
+            GEOMETRY flags;
             StridedBuffer aabbInput;
         };
         std::vector<Geometry> eachGeometry;

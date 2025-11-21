@@ -282,7 +282,7 @@ struct CommandPool::Impl {
     const VkDevice vkDevice;
     const Device device;
     const VkCommandPool vkCmdPool;
-    const VkCommandPoolCreateFlags flags;
+    const COMMAND_POOL_CREATE flags;
     const uint32_t qfIndex;
     const QueueType type;
     std::deque<CommandBuffer> cmdBuffers;
@@ -290,7 +290,7 @@ struct CommandPool::Impl {
     Impl(VkDevice vkDevice,
         Device device,
         VkCommandPool vkCmdPool, 
-        VkCommandPoolCreateFlags flags,
+        COMMAND_POOL_CREATE flags,
         uint32_t qfIndex,
         QueueType type)
     : vkDevice(vkDevice)
@@ -446,21 +446,21 @@ struct Buffer::Impl {
     const VkBuffer vkBuffer;
     const VkDeviceMemory vkMemory;
     const uint64_t size;
-    const VkBufferUsageFlags usage;
-    const VkMemoryPropertyFlags reqMemProps;
-    const VkMemoryPropertyFlags memProps;
+    const BUFFER_USAGE usage;
+    const MEMORY_PROPERTY reqMemProps;
+    const MEMORY_PROPERTY memProps;
     uint8_t* mapped = nullptr;
     uint64_t mappedOffset = 0;  // used for debug
     uint64_t mappedSize = 0;    // used for debug
-    VkDeviceAddress deviceAddress = 0;
+    DeviceAddress deviceAddress = 0;
 
     Impl(VkDevice vkDevice, 
         VkBuffer vkBuffer, 
         VkDeviceMemory vkMemory, 
         uint64_t size, 
-        VkBufferUsageFlags usage,
-        VkMemoryPropertyFlags reqMemProps,
-        VkMemoryPropertyFlags memProps)
+        BUFFER_USAGE usage,
+        MEMORY_PROPERTY reqMemProps,
+        MEMORY_PROPERTY memProps)
     : vkDevice(vkDevice)
     , vkBuffer(vkBuffer)
     , vkMemory(vkMemory)
@@ -482,12 +482,12 @@ struct Image::Impl {
     const VkDevice vkDevice;
     const VkImage vkImage;
     const VkDeviceMemory vkMemory;
-    const VkFormat format;
+    const FORMAT format;
     const uint32_t width;
     const uint32_t height;
     const uint32_t depth;
     const uint32_t arrayLayers;
-    const VkImageUsageFlags usage;
+    const IMAGE_USAGE usage;
     // IMAGE_LAYOUT currentLayout;
     const bool ownedBySwapchain;
 
@@ -507,12 +507,12 @@ struct Image::Impl {
     Impl(VkDevice vkDevice, 
         VkImage vkImage, 
         VkDeviceMemory vkMemory, 
-        VkFormat format,
+        FORMAT format,
         uint32_t width,
         uint32_t height,
         uint32_t depth,
         uint32_t arrayLayers,
-        VkImageUsageFlags usage,
+        IMAGE_USAGE usage,
         // IMAGE_LAYOUT initialLayout,
         bool ownedBySwapchain)
     : vkDevice(vkDevice)
@@ -654,7 +654,7 @@ DescriptorPool::Impl::~Impl()
 struct AccelerationStructure::Impl {
     VkDevice vkDevice;
     VkAccelerationStructureKHR vkAccelStruct;
-    VkDeviceAddress deviceAddress;
+    DeviceAddress deviceAddress;
 
     Impl(
         VkDevice vkDevice,
@@ -728,40 +728,6 @@ Device Runtime::device(DeviceSettings settings)
     return createDevice(settings);
 }
 
-Device Runtime::createDevice(const DeviceSettings& settings)
-{
-    auto physicalDevices = arrayFrom(vkEnumeratePhysicalDevices, impl().instance);
-    
-    printf("**************************************************************\n");
-    printf("Detected %zu physical devices:\n", physicalDevices.size());
-    for (uint32_t i = 0; i < physicalDevices.size(); ++i) 
-        printGpuInfo(i, physicalDevices[i]);
-    fflush(stdout);
-
-    int selected = 0;
-
-    if (physicalDevices.size() > 1)
-    {
-        while(true)
-        {
-            printf("Select a physical device (0-%d): ", (uint32_t)physicalDevices.size() - 1);
-            fflush(stdout);
-            scanf("%d", &selected);
-            if (selected < 0 || selected >= (int)physicalDevices.size())
-            {            
-                fprintf(stderr, "Invalid index %d! Please select again.\n", selected);
-                continue;
-            }
-            break;
-        }
-    }
-
-    printf("[GPU %d] is Selected.\n", selected);
-    printf("**************************************************************\n\n");
-    fflush(stdout);
-
-    return createDevice(physicalDevices[selected], settings);
-}
 
 struct PNextChain {
     void* head = nullptr;
@@ -800,8 +766,42 @@ struct PNextChain {
     }
 };
 
-Device Runtime::createDevice(VkPhysicalDevice pd, const DeviceSettings& settings)
+Device Runtime::createDevice(const DeviceSettings& settings)
 {
+    auto physicalDevices = arrayFrom(vkEnumeratePhysicalDevices, impl().instance);
+    
+    printf("**************************************************************\n");
+    printf("Detected %zu physical devices:\n", physicalDevices.size());
+    for (uint32_t i = 0; i < physicalDevices.size(); ++i) 
+        printGpuInfo(i, physicalDevices[i]);
+    fflush(stdout);
+
+    int selected = 0;
+
+    if (physicalDevices.size() > 1)
+    {
+        while(true)
+        {
+            printf("Select a physical device (0-%d): ", (uint32_t)physicalDevices.size() - 1);
+            fflush(stdout);
+            scanf("%d", &selected);
+            if (selected < 0 || selected >= (int)physicalDevices.size())
+            {            
+                fprintf(stderr, "Invalid index %d! Please select again.\n", selected);
+                continue;
+            }
+            break;
+        }
+    }
+
+    printf("[GPU %d] is Selected.\n", selected);
+    printf("**************************************************************\n\n");
+    fflush(stdout);
+
+    ///////////////////////////////////////////////////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////////////////////
+    VkPhysicalDevice pd = physicalDevices[selected];
     auto qfProps = arrayFrom(vkGetPhysicalDeviceQueueFamilyProperties, pd);
     
     std::vector<const char*> reqExtentions = {
@@ -1191,17 +1191,17 @@ QueueSelector Device::queue(uint32_t index) const
 CommandPool Device::setDefalutCommandPool(QueueType type, CommandPool cmdPool)
 {
     ASSERT_(impl().qfIndex[type] != uint32_t(-1));
-    impl().defaultCmdPool[type][cmdPool.impl().flags] = cmdPool;
+    impl().defaultCmdPool[type][(uint32_t)cmdPool.impl().flags] = cmdPool;
     return cmdPool;
 }
 
-CommandBuffer Device::newCommandBuffer(QueueType type, VkCommandPoolCreateFlags poolFlags)
+CommandBuffer Device::newCommandBuffer(QueueType type, COMMAND_POOL_CREATE poolFlags)
 {
     ASSERT_(impl().qfIndex[type] != uint32_t(-1));
-    if (!impl().defaultCmdPool[type][poolFlags]) 
-        impl().defaultCmdPool[type][poolFlags] = createCommandPool(type, poolFlags);
+    if (!impl().defaultCmdPool[type][(uint32_t)poolFlags]) 
+        impl().defaultCmdPool[type][(uint32_t)poolFlags] = createCommandPool(type, poolFlags);
     
-    return impl().defaultCmdPool[type][poolFlags].newCommandBuffer();
+    return impl().defaultCmdPool[type][(uint32_t)poolFlags].newCommandBuffer();
 }
 
 
@@ -1410,14 +1410,14 @@ Queue Queue::waitIdle()
 /////////////////////////////////////////////////////////////////////////////////////////
 // CommandPool
 /////////////////////////////////////////////////////////////////////////////////////////
-CommandPool Device::createCommandPool(QueueType type, VkCommandPoolCreateFlags flags)
+CommandPool Device::createCommandPool(QueueType type, COMMAND_POOL_CREATE flags)
 {
     uint32_t qfIndex = impl().qfIndex[type];
     ASSERT_(qfIndex != uint32_t(-1));
 
     auto vkHandle = create<VkCommandPool>(impl().vkDevice, {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-        .flags = flags,
+        .flags = (VkCommandPoolCreateFlags)(uint32_t)flags,
         .queueFamilyIndex = qfIndex,
     });
 
@@ -1492,11 +1492,11 @@ Queue CommandBuffer::lastSubmittedQueue() const
     return impl().lastSubmittedQueue;
 }
 
-CommandBuffer CommandBuffer::begin(VkCommandBufferUsageFlags flags)
+CommandBuffer CommandBuffer::begin(COMMAND_BUFFER_USAGE flags)
 {
     VkCommandBufferBeginInfo beginInfo{
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-        .flags = flags,
+        .flags = (VkCommandBufferUsageFlags)(uint32_t)flags,
     };
     !vkBeginCommandBuffer(impl().vkCmdBuffer, &beginInfo);
     return *this;
@@ -1539,7 +1539,7 @@ CommandBuffer CommandBuffer::bindPipeline(Pipeline pipeline)
 
 CommandBuffer CommandBuffer::bindDescSets(
     PipelineLayout layout, 
-    VkPipelineBindPoint bindPoint,
+    PIPELINE_BIND_POINT bindPoint,
     std::vector<DescriptorSet> descSets,
     uint32_t firstSet)
 {
@@ -1548,7 +1548,7 @@ CommandBuffer CommandBuffer::bindDescSets(
         vkDescSets[i] = descSets[i].impl().vkDescSet;
 
     vkCmdBindDescriptorSets(
-        impl().vkCmdBuffer, bindPoint, 
+        impl().vkCmdBuffer, (VkPipelineBindPoint)(uint32_t)bindPoint, 
         layout.impl().vkPipeLayout, firstSet, 
         (uint32_t)vkDescSets.size(), vkDescSets.data(), 
         0, nullptr);
@@ -1587,7 +1587,7 @@ CommandBuffer CommandBuffer::bindDescSets(
 
 CommandBuffer CommandBuffer::setPushConstants(
     PipelineLayout layout, 
-    VkShaderStageFlags stageFlags, 
+    SHADER_STAGE stageFlags, 
     uint32_t offset, 
     uint32_t size,
     const void* values)
@@ -1595,7 +1595,7 @@ CommandBuffer CommandBuffer::setPushConstants(
     vkCmdPushConstants(
         impl().vkCmdBuffer, 
         layout.impl().vkPipeLayout, 
-        stageFlags, 
+        (VkShaderStageFlags)(uint32_t)stageFlags, 
         offset, 
         size, 
         values);
@@ -1858,12 +1858,12 @@ CommandBuffer CommandBuffer::copyBuffer(
     uint64_t dstOffset,  
     uint64_t size)
 {
-	ASSERT_(src.impl().usage & VK_BUFFER_USAGE_TRANSFER_SRC_BIT); 
-	ASSERT_(dst.impl().usage & VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+	ASSERT_((uint32_t)src.impl().usage & VK_BUFFER_USAGE_TRANSFER_SRC_BIT); 
+	ASSERT_((uint32_t)dst.impl().usage & VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     ASSERT_(srcOffset < src.size()); // VUID-vkCmdCopyBuffer-srcOffset-00113
     ASSERT_(dstOffset < dst.size()); // VUID-vkCmdCopyBuffer-dstOffset-00114
 
-    if (size == VK_WHOLE_SIZE)
+    if (size == EVA_WHOLE_SIZE)
         size = std::min(src.size() - srcOffset, dst.size() - dstOffset);  
     else 
     {
@@ -1896,8 +1896,8 @@ CommandBuffer CommandBuffer::copyBuffer(BufferRange src, BufferRange dst)
 CommandBuffer CommandBuffer::copyImage(
     Image src, Image dst, std::vector<CopyRegion> regions)
 {
-	ASSERT_(src.impl().usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
-	ASSERT_(dst.impl().usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+	ASSERT_((uint32_t)src.impl().usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+	ASSERT_((uint32_t)dst.impl().usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT);
     if (regions.empty()) 
         regions.push_back({});
     
@@ -1950,8 +1950,8 @@ CommandBuffer CommandBuffer::copyImage(
 CommandBuffer CommandBuffer::copyBufferToImage(
     BufferRange src, Image dst, std::vector<CopyRegion> regions)
 {
-	ASSERT_(src.usage() & VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-	ASSERT_(dst.impl().usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+	ASSERT_((uint32_t)src.usage() & VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+	ASSERT_((uint32_t)dst.impl().usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT);
     if (regions.empty()) 
         regions.push_back({});
     
@@ -1999,8 +1999,8 @@ CommandBuffer CommandBuffer::copyBufferToImage(
 CommandBuffer CommandBuffer::copyImageToBuffer(
     Image src, BufferRange dst, std::vector<CopyRegion> regions)
 {
-	ASSERT_(src.impl().usage & VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-	ASSERT_(dst.usage() & VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+	ASSERT_((uint32_t)src.impl().usage & VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+	ASSERT_((uint32_t)dst.usage() & VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     if (regions.empty()) 
         regions.push_back({});
     
@@ -2079,8 +2079,8 @@ CommandBuffer CommandBuffer::traceRays(
 
     VkStridedDeviceAddressRegionKHR hitGpSbt = {
         .deviceAddress = hitGroupSbt.buffer.deviceAddress(),
-        .stride = (VkDeviceAddress) hitGroupSbt.recordSize,
-        .size = (VkDeviceAddress) hitGroupSbt.recordSize * hitGroupSbt.numRecords,
+        .stride = (DeviceAddress) hitGroupSbt.recordSize,
+        .size = (DeviceAddress) hitGroupSbt.recordSize * hitGroupSbt.numRecords,
     };
 
     vkCmdTraceRaysKHR_(
@@ -2119,11 +2119,11 @@ CommandBuffer CommandBuffer::traceRays(uint32_t width, uint32_t height, uint32_t
 /////////////////////////////////////////////////////////////////////////////////////////
 // Fence
 /////////////////////////////////////////////////////////////////////////////////////////
-Fence Device::createFence(VkFenceCreateFlags flags)
+Fence Device::createFence(bool signaled)
 {
     auto vkHandle = create<VkFence>(impl().vkDevice, {
         .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-        .flags = flags,
+        .flags = (VkFenceCreateFlags) (signaled ? VK_FENCE_CREATE_SIGNALED_BIT : 0),
     });
 
     auto pImpl = new Fence::Impl(
@@ -2133,13 +2133,13 @@ Fence Device::createFence(VkFenceCreateFlags flags)
     return *impl().fences.insert(new Fence::Impl*(pImpl)).first;
 }
 
-VkResult Device::waitFences(std::vector<Fence> fences, bool waitAll, uint64_t timeout)
+Result Device::waitFences(std::vector<Fence> fences, bool waitAll, uint64_t timeout)
 {
     std::vector<VkFence> vkFences(fences.size());
     for (uint32_t i = 0; i < fences.size(); ++i) 
         vkFences[i] = fences[i].impl().vkFence;
 
-    return vkWaitForFences(impl().vkDevice, (uint32_t)fences.size(), vkFences.data(), waitAll, timeout);
+    return (Result) vkWaitForFences(impl().vkDevice, (uint32_t)fences.size(), vkFences.data(), waitAll, timeout);
 }
 
 void Device::resetFences(std::vector<Fence> fences)
@@ -2151,12 +2151,12 @@ void Device::resetFences(std::vector<Fence> fences)
     !vkResetFences(impl().vkDevice, (uint32_t)fences.size(), vkFences.data());
 }
 
-VkResult Fence::wait(bool autoReset, uint64_t timeout) const
+Result Fence::wait(bool autoReset, uint64_t timeout) const
 {
     VkResult res = vkWaitForFences(impl().vkDevice, 1, &impl().vkFence, VK_TRUE, timeout);
     if(res==VK_SUCCESS && autoReset)
         !vkResetFences(impl().vkDevice, 1, &impl().vkFence);
-    return res;
+    return (Result) res;
 }
 
 void Fence::reset() const
@@ -2222,16 +2222,6 @@ ShaderModule Device::createShaderModule(const ShaderModuleCreateInfo& info)
     return *impl().shaderModules.insert(new ShaderModule::Impl*(pImpl)).first;
 }
 
-VkPipelineShaderStageCreateInfo ShaderModule::stage() const
-{
-    return {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-        .stage = (VkShaderStageFlagBits)(uint32_t) impl().stage,
-        .module = impl().vkModule,
-        .pName = "main",
-    };
-}
-
 bool ShaderModule::hasReflect() const
 {
     return impl().pModule != nullptr;
@@ -2288,7 +2278,7 @@ void SpecializationConstant::buildCache() const
     for (auto& [_, bytes] : orderedConstants) 
         totalSize += bytes.size();
     
-    cachedMapEntries = std::vector<VkSpecializationMapEntry>{};
+    cachedMapEntries = std::vector<SpecializationMapEntry>{};
     cachedMapEntries->reserve(orderedConstants.size());
     cachedData = std::vector<uint8_t>{};
     cachedData->reserve(totalSize);
@@ -2304,7 +2294,7 @@ void SpecializationConstant::buildCache() const
         cachedData->insert(cachedData->end(), bytes.begin(), bytes.end());
     }
     
-    cachedSpecInfo = VkSpecializationInfo{
+    cachedSpecInfo = SpecializationInfo{
         .mapEntryCount = static_cast<uint32_t>(cachedMapEntries->size()),
         .pMapEntries = cachedMapEntries->data(),
         .dataSize = cachedData->size(),
@@ -2403,8 +2393,15 @@ ComputePipeline Device::createComputePipeline(const ComputePipelineCreateInfo& i
     PipelineLayout layout = info.layout.value_or(createPipelineLayout(csModule.extractPipelineLayoutDesc()));
 
     const auto& spec = info.csStage.specialization;
-    VkPipelineShaderStageCreateInfo stageInfo = csModule.stage();
-    stageInfo.pSpecializationInfo = spec.getInfo();
+    
+    VkPipelineShaderStageCreateInfo stageInfo = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = (VkShaderStageFlagBits)(uint32_t) csModule.impl().stage,
+        .module = csModule.impl().vkModule,
+        .pName = "main",
+    };
+
+    stageInfo.pSpecializationInfo = (VkSpecializationInfo*) spec.getInfo();
 
     VkComputePipelineCreateInfo createInfo{
         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
@@ -2510,8 +2507,13 @@ RaytracingPipeline Device::createRaytracingPipeline(const RaytracingPipelineCrea
         {
             auto [m, isTemp] = makeModule(stage, *stageInfo.shader, reflect);
 
-            VkPipelineShaderStageCreateInfo ci = m.stage();
-            ci.pSpecializationInfo = stageInfo.specialization.getInfo();
+            VkPipelineShaderStageCreateInfo ci = {
+                .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                .stage = (VkShaderStageFlagBits)(uint32_t) stage,
+                .module = m.impl().vkModule,
+                .pName = "main",
+            };
+            ci.pSpecializationInfo = (VkSpecializationInfo*)stageInfo.specialization.getInfo();
             stages.push_back(ci);
             modules.push_back(std::move(m));
             isTempModule.push_back(isTemp);
@@ -2620,8 +2622,8 @@ RaytracingPipeline Device::createRaytracingPipeline(const RaytracingPipelineCrea
 
         sbtBuffer = createBuffer({
             .size = bufferSize,
-            .usage = VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-            .reqMemProps = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            .usage = BUFFER_USAGE::SHADER_BINDING_TABLE | BUFFER_USAGE::SHADER_DEVICE_ADDRESS,
+            .reqMemProps = MEMORY_PROPERTY::HOST_VISIBLE | MEMORY_PROPERTY::HOST_COHERENT,
         }); // TODO : support device local memory
 
         uint32_t numHandles = groups.size();
@@ -2704,19 +2706,19 @@ Buffer Device::createBuffer(const BufferCreateInfo& info)
     auto vkHandle = create<VkBuffer>(impl().vkDevice, {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = info.size,
-        .usage = info.usage,
+        .usage = (VkBufferUsageFlags)(uint32_t)info.usage,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,  // TODO: support VK_SHARING_MODE_CONCURRENT
     });
 
     auto memInfo = getMemoryAllocInfo(
-        impl().vkPhysicalDevice, impl().vkDevice, vkHandle, info.reqMemProps);
+        impl().vkPhysicalDevice, impl().vkDevice, vkHandle, (VkMemoryPropertyFlags)(uint32_t)info.reqMemProps);
 
     static VkMemoryAllocateFlagsInfo flagsInfo{
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,
         .flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT
     };
 
-    if (info.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
+    if ((uint32_t)info.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
         memInfo.first.pNext = &flagsInfo;
 
     VkDeviceMemory memory = allocate<VkDeviceMemory>(impl().vkDevice, memInfo.first);
@@ -2730,9 +2732,9 @@ Buffer Device::createBuffer(const BufferCreateInfo& info)
         info.size,
         info.usage,
         info.reqMemProps,
-        memInfo.second);
+        (MEMORY_PROPERTY)(uint32_t)memInfo.second);
 
-    if (info.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
+    if ((uint32_t)info.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
     {
         VkBufferDeviceAddressInfo addressInfo{
             .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
@@ -2748,20 +2750,20 @@ uint8_t* Buffer::map(uint64_t offset, uint64_t size)
 {
     ASSERT_(*this);
     ASSERT_(!impl().mapped);                                         // VUID-vkMapMemory-memory-00678        
-    ASSERT_(impl().memProps & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);  // VUID-vkMapMemory-memory-00682
+    ASSERT_((uint32_t)impl().memProps & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);  // VUID-vkMapMemory-memory-00682
     ASSERT_(offset < impl().size);                                   // VUID-vkMapMemory-offset-00679
-    ASSERT_(size == VK_WHOLE_SIZE || offset + size <= impl().size);  // VUID-vkMapMemory-size-00681
+    ASSERT_(size == EVA_WHOLE_SIZE || offset + size <= impl().size);  // VUID-vkMapMemory-size-00681
 
     !vkMapMemory(impl().vkDevice, impl().vkMemory, offset, size, 0, (void**)&impl().mapped);
     impl().mappedOffset = offset;
-    impl().mappedSize = size == VK_WHOLE_SIZE ? impl().size : size;
+    impl().mappedSize = size == EVA_WHOLE_SIZE ? impl().size : size;
     return impl().mapped;
 }
 
 VkMappedMemoryRange Buffer::Impl::getRange(uint64_t offset, uint64_t size) const
 {
     ASSERT_(mapped);                                                                    // VUID-VkMappedMemoryRange-memory-00684
-    if (size == VK_WHOLE_SIZE) 
+    if (size == EVA_WHOLE_SIZE) 
         ASSERT_(mappedOffset <= offset && offset <= mappedOffset + mappedSize);         // VUID-VkMappedMemoryRange-memory-00686
     else 
         ASSERT_(mappedOffset <= offset && offset + size <= mappedOffset + mappedSize);  // VUID-VkMappedMemoryRange-memory-00685
@@ -2777,7 +2779,7 @@ VkMappedMemoryRange Buffer::Impl::getRange(uint64_t offset, uint64_t size) const
 void Buffer::flush(uint64_t offset, uint64_t size) const
 {
     VkMappedMemoryRange range = impl().getRange(offset, size);
-    if (impl().memProps & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) 
+    if ((uint32_t)impl().memProps & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) 
         return;
     vkFlushMappedMemoryRanges(impl().vkDevice, 1, &range);
 }
@@ -2785,7 +2787,7 @@ void Buffer::flush(uint64_t offset, uint64_t size) const
 void Buffer::invalidate(uint64_t offset, uint64_t size) const
 {
     VkMappedMemoryRange range = impl().getRange(offset, size);
-    if (impl().memProps & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) 
+    if ((uint32_t)impl().memProps & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) 
         return;
     vkInvalidateMappedMemoryRanges(impl().vkDevice, 1, &range);
 }
@@ -2793,7 +2795,7 @@ void Buffer::invalidate(uint64_t offset, uint64_t size) const
 void Buffer::unmap()
 {
     ASSERT_(impl().mapped); // VUID-vkUnmapMemory-memory-00689
-    ASSERT_(impl().memProps & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+    ASSERT_((uint32_t)impl().memProps & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
 
     vkUnmapMemory(impl().vkDevice, impl().vkMemory);
     impl().mapped = nullptr;
@@ -2806,28 +2808,19 @@ inline uint64_t Buffer::size() const
     return impl().size;
 }
 
-VkBufferUsageFlags Buffer::usage() const
+BUFFER_USAGE Buffer::usage() const
 {
     return impl().usage;
 }
 
-VkMemoryPropertyFlags Buffer::memoryProperties() const
+MEMORY_PROPERTY Buffer::memoryProperties() const
 {
     return impl().memProps;
 }
 
-VkDescriptorBufferInfo Buffer::descInfo(uint64_t offset, uint64_t size) const
+DeviceAddress Buffer::deviceAddress() const
 {
-    return {
-        .buffer = impl().vkBuffer,
-        .offset = offset,
-        .range = size,
-    };
-}
-
-VkDeviceAddress Buffer::deviceAddress() const
-{
-    ASSERT_(impl().usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    ASSERT_((uint32_t)impl().usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     return impl().deviceAddress;
 }
 
@@ -2841,9 +2834,10 @@ Image Device::createImage(const ImageCreateInfo& info)
 
     auto vkHandle = create<VkImage>(impl().vkDevice, {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .flags = (VkImageCreateFlags)(uint32_t)info.flags,
         .imageType = info.extent.depth > 1 ? VK_IMAGE_TYPE_3D : 
                      info.extent.height > 1 ? VK_IMAGE_TYPE_2D : VK_IMAGE_TYPE_1D,
-        .format = info.format,
+        .format = (VkFormat)(uint32_t)info.format,
         .extent = {
             info.extent.width,
             info.extent.height,
@@ -2853,13 +2847,13 @@ Image Device::createImage(const ImageCreateInfo& info)
         .arrayLayers = info.arrayLayers,
         .samples = VK_SAMPLE_COUNT_1_BIT,           // TODO: support multi-sampling
         .tiling = VK_IMAGE_TILING_OPTIMAL,          // TODO: support VK_IMAGE_TILING_LINEAR
-        .usage = info.usage,
+        .usage = (VkImageUsageFlags)(uint32_t)info.usage,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,   // TODO: support VK_SHARING_MODE_CONCURRENT
         .initialLayout = (VkImageLayout)(uint32_t) initialLayout,
     });
 
     auto memInfo = getMemoryAllocInfo(
-        impl().vkPhysicalDevice, impl().vkDevice, vkHandle, info.reqMemProps);
+        impl().vkPhysicalDevice, impl().vkDevice, vkHandle, (VkMemoryPropertyFlags)(uint32_t)info.reqMemProps);
 
     VkDeviceMemory memory = allocate<VkDeviceMemory>(impl().vkDevice, memInfo.first);
     !vkBindImageMemory(impl().vkDevice, vkHandle, memory, 0);
@@ -2882,7 +2876,7 @@ Image Device::createImage(const ImageCreateInfo& info)
 
 ImageView Image::view(ImageViewDesc&& desc) const
 {   
-    if (desc.viewType == VK_IMAGE_VIEW_TYPE_MAX_ENUM)
+    if (desc.viewType == IMAGE_VIEW_TYPE::MAX_ENUM)
     {
         // if (this->operator->()->depth > 1)  // OK
         // if ((*this).operator->()->depth > 1)  // OK
@@ -2891,29 +2885,36 @@ ImageView Image::view(ImageViewDesc&& desc) const
         // if (impl().depth > 1)
         {
             ASSERT_(impl().arrayLayers == 1); // VUID-VkImageCreateInfo-imageType-00961
-            desc.viewType = VK_IMAGE_VIEW_TYPE_3D;
+            desc.viewType = IMAGE_VIEW_TYPE::_3D;
         }
         else
         {
             if (impl().height == 1)
-                desc.viewType = impl().arrayLayers == 1 ? VK_IMAGE_VIEW_TYPE_1D : VK_IMAGE_VIEW_TYPE_1D_ARRAY;
+                desc.viewType = impl().arrayLayers == 1 ? IMAGE_VIEW_TYPE::_1D : IMAGE_VIEW_TYPE::_1D_ARRAY;
             else 
-                desc.viewType = impl().arrayLayers == 1 ? VK_IMAGE_VIEW_TYPE_2D : VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+                desc.viewType = impl().arrayLayers == 1 ? IMAGE_VIEW_TYPE::_2D : IMAGE_VIEW_TYPE::_2D_ARRAY;
         }
     }
     
-    if (desc.format == VK_FORMAT_MAX_ENUM)
+    if (desc.format == FORMAT::MAX_ENUM)
         desc.format = impl().format;
 
     if (auto it = impl().imageViews.find(desc); it != impl().imageViews.end())
         return it->second;
 
+    VkComponentMapping components = {
+        .r = (VkComponentSwizzle)(uint32_t)desc.components.r,
+        .g = (VkComponentSwizzle)(uint32_t)desc.components.g,
+        .b = (VkComponentSwizzle)(uint32_t)desc.components.b,
+        .a = (VkComponentSwizzle)(uint32_t)desc.components.a,
+    };
+
     auto vkHandle = create<VkImageView>(impl().vkDevice, {
         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .image = impl().vkImage,
-        .viewType = desc.viewType,
-        .format = desc.format,
-        .components = desc.components,
+        .viewType = (VkImageViewType)(uint32_t)desc.viewType,
+        .format = (VkFormat)(uint32_t)desc.format,
+        .components = components,
         .subresourceRange = {
             .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,    // TODO: support depth/stencil
             .levelCount = VK_REMAINING_MIP_LEVELS,      // TODO: support mipmap
@@ -2933,20 +2934,20 @@ Sampler Device::createSampler(const SamplerCreateInfo& info)
 {
     auto vkHandle = create<VkSampler>(impl().vkDevice, {
         .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-        .magFilter = info.magFilter,
-        .minFilter = info.minFilter,
-        .mipmapMode = info.mipmapMode,
-        .addressModeU = info.addressModeU,
-        .addressModeV = info.addressModeV,
-        .addressModeW = info.addressModeW,
+        .magFilter = (VkFilter)(uint32_t)info.magFilter,
+        .minFilter = (VkFilter)(uint32_t)info.minFilter,
+        .mipmapMode = (VkSamplerMipmapMode)(uint32_t)info.mipmapMode,
+        .addressModeU = (VkSamplerAddressMode)(uint32_t)info.addressModeU,
+        .addressModeV = (VkSamplerAddressMode)(uint32_t)info.addressModeV,
+        .addressModeW = (VkSamplerAddressMode)(uint32_t)info.addressModeW,
         .mipLodBias = info.mipLodBias,
         .anisotropyEnable = info.anisotropyEnable,
         .maxAnisotropy = info.maxAnisotropy,
         .compareEnable = info.compareEnable,
-        .compareOp = info.compareOp,
+        .compareOp = (VkCompareOp)(uint32_t)info.compareOp,
         .minLod = info.minLod,
         .maxLod = info.maxLod,
-        .borderColor = info.borderColor,
+        .borderColor = (VkBorderColor)(uint32_t)info.borderColor,
         .unnormalizedCoordinates = info.unnormalizedCoordinates,
     });
 
@@ -3063,11 +3064,21 @@ DescriptorSetLayout PipelineLayout::descSetLayout(uint32_t setId) const
 /////////////////////////////////////////////////////////////////////////////////////////
 DescriptorPool Device::createDescriptorPool(const DescriptorPoolCreateInfo& info)
 {
+    std::vector<VkDescriptorPoolSize> vkPoolSizes;
+    vkPoolSizes.reserve(info.maxTypes.size());
+    for (const auto& poolSize : info.maxTypes)
+    {
+        vkPoolSizes.push_back({
+            .type = (VkDescriptorType)(uint32_t)poolSize.type,
+            .descriptorCount = poolSize.descriptorCount,
+        });
+    }
+
     auto vkHandle = create<VkDescriptorPool>(impl().vkDevice, {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .maxSets = info.maxSets,
-        .poolSizeCount = (uint32_t)info.maxTypes.size(),
-        .pPoolSizes = info.maxTypes.data(),
+        .poolSizeCount = (uint32_t)vkPoolSizes.size(),
+        .pPoolSizes = vkPoolSizes.data(),
     });
 
     auto pImpl = new DescriptorPool::Impl(
@@ -3273,7 +3284,7 @@ struct Window::Impl {
     VkSwapchainKHR vkSwapchain;
     std::vector<Image> swapchainImages;
     mutable std::deque<uint32_t> availableSwapchainImageIndices;
-    VkFormat swapchainImageFormat;
+    FORMAT swapchainImageFormat;
 
     // Input callbacks
     void (*mouseButtonCallback)(int button, int action, double xpos, double ypos) = nullptr;
@@ -3291,7 +3302,7 @@ struct Window::Impl {
         VkDevice vkDevice,
         VkSwapchainKHR vkSwapchain,
         std::vector<Image>&& swapchainImages,
-        VkFormat swapchainImageFormat)
+        FORMAT swapchainImageFormat)
         : pWindow(pWindow)
         , vkSurface(vkSurface)
         , title(title)
@@ -3342,7 +3353,7 @@ Window Runtime::createWindow(WindowCreateInfo info)
     ASSERT_( 
         ([&]() { 
         for (auto& f : arrayFrom(vkGetPhysicalDeviceSurfaceFormatsKHR, pd, vkSurface)) 
-            if (f.format == info.swapChainImageFormat && f.colorSpace == info.swapChainImageColorSpace) 
+            if (f.format == (uint32_t)info.swapChainImageFormat && f.colorSpace == (uint32_t)info.swapChainImageColorSpace) 
                 return true; 
             return false; 
         })() 
@@ -3355,14 +3366,14 @@ Window Runtime::createWindow(WindowCreateInfo info)
     ASSERT_(
         ([&]() { 
             VkFormatProperties formatProps;
-            vkGetPhysicalDeviceFormatProperties(pd, info.swapChainImageFormat, &formatProps);
-            if ((info.swapChainImageUsage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
+            vkGetPhysicalDeviceFormatProperties(pd, (VkFormat)(uint32_t)info.swapChainImageFormat, &formatProps);
+            if (((uint32_t)info.swapChainImageUsage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
                 && !(formatProps.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT))
                 return false;
-            if ((info.swapChainImageUsage & VK_IMAGE_USAGE_STORAGE_BIT)
+            if (((uint32_t)info.swapChainImageUsage & VK_IMAGE_USAGE_STORAGE_BIT)
                 && !(formatProps.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT))
                 return false;
-            if ((info.swapChainImageUsage & VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+            if (((uint32_t)info.swapChainImageUsage & VK_IMAGE_USAGE_TRANSFER_DST_BIT)
                 && !(formatProps.optimalTilingFeatures & VK_FORMAT_FEATURE_TRANSFER_DST_BIT))
                 return false;
             return true;
@@ -3374,7 +3385,7 @@ Window Runtime::createWindow(WindowCreateInfo info)
         auto presentModes = arrayFrom(vkGetPhysicalDeviceSurfacePresentModesKHR, pd, vkSurface);
         for (auto mode : presentModes) 
         {
-            if (mode == info.preferredPresentMode) 
+            if (mode == (VkPresentModeKHR)(uint32_t)info.preferredPresentMode) 
             {
                 presentMode = mode; 
                 break; 
@@ -3390,11 +3401,11 @@ Window Runtime::createWindow(WindowCreateInfo info)
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .surface = vkSurface,
         .minImageCount = minSwapChainImages,
-        .imageFormat = info.swapChainImageFormat,
-        .imageColorSpace = info.swapChainImageColorSpace,
+        .imageFormat = (VkFormat)(uint32_t)info.swapChainImageFormat,
+        .imageColorSpace = (VkColorSpaceKHR)(uint32_t)info.swapChainImageColorSpace,
         .imageExtent = { info.width, info.height }, 
         .imageArrayLayers = 1,
-        .imageUsage = info.swapChainImageUsage,
+        .imageUsage = (VkImageUsageFlags)(uint32_t)info.swapChainImageUsage,
         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,          // TODO: support VK_SHARING_MODE_CONCURRENT
         .preTransform = capabilities.currentTransform,
         .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,    // do not support other composite modes for simplicity
@@ -3605,8 +3616,8 @@ void Window::setScrollCallback(void (*callback)(double xoffset, double yoffset))
 /////////////////////////////////////////////////////////////////////////////////////////
 AccelerationStructure Device::createAccelerationStructure(const AsCreateInfo& info) 
 {
-    ASSERT_(info.internalBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR);  // VUID-VkAccelerationStructureCreateInfoKHR-buffer-03614
-    ASSERT_(info.internalBuffer.memoryProperties() & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);          // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03707
+    ASSERT_((uint32_t)info.internalBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR);  // VUID-VkAccelerationStructureCreateInfoKHR-buffer-03614
+    ASSERT_((uint32_t)info.internalBuffer.memoryProperties() & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);          // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03707
     ASSERT_(info.internalBuffer.offset % asBufferOffsetAlignment() == 0);
     ASSERT_(info.size != 0);
     
@@ -3617,7 +3628,7 @@ AccelerationStructure Device::createAccelerationStructure(const AsCreateInfo& in
             .buffer = info.internalBuffer.buffer.impl().vkBuffer,
             .offset = (VkDeviceSize)info.internalBuffer.offset,
             .size = (VkDeviceSize) info.size,
-            .type = info.asType,
+            .type = (VkAccelerationStructureTypeKHR)(uint32_t)info.asType,
         };
         !vkCreateAccelerationStructureKHR_(impl().vkDevice, &createInfo, nullptr, &vkAccelStruct);
     }
@@ -3632,13 +3643,13 @@ AccelerationStructure Device::createAccelerationStructure(const AsCreateInfo& in
         .accelerationStructure = vkAccelStruct,
     };
 
-    ASSERT_(info.internalBuffer.usage() & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    ASSERT_((uint32_t)info.internalBuffer.usage() & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     pImpl->deviceAddress = vkGetAccelerationStructureDeviceAddressKHR_(impl().vkDevice, &addressInfo);
 
     return *impl().accelerationStructures.insert(new AccelerationStructure::Impl*(pImpl)).first;
 }
 
-VkDeviceAddress AccelerationStructure::deviceAddress() const
+DeviceAddress AccelerationStructure::deviceAddress() const
 {
     // ASSERT_(impl().usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     return impl().deviceAddress;
@@ -3711,18 +3722,18 @@ VkDeviceAddress AccelerationStructure::deviceAddress() const
 // }
 
 
-VkAccelerationStructureBuildSizesInfoKHR Device::getBuildSizesInfo(const AsBuildInfo& info) const
+AsBuildSizesInfo Device::getBuildSizesInfo(const AsBuildInfo& info) const
 {
     VkAccelerationStructureGeometryKHR base{
         .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
-        .geometryType = info.geometryType,
+        .geometryType = (VkGeometryTypeKHR)(uint32_t)info.geometryType,
     };
 
-    if (info.geometryType == VK_GEOMETRY_TYPE_TRIANGLES_KHR) 
+    if (info.geometryType == GEOMETRY_TYPE::TRIANGLES) 
         base.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-    else if (info.geometryType == VK_GEOMETRY_TYPE_AABBS_KHR) 
+    else if (info.geometryType == GEOMETRY_TYPE::AABBS) 
         base.geometry.aabbs.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_AABBS_DATA_KHR;
-    else if (info.geometryType == VK_GEOMETRY_TYPE_INSTANCES_KHR)
+    else if (info.geometryType == GEOMETRY_TYPE::INSTANCES)
         base.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
     else 
         ASSERT_(false);
@@ -3731,10 +3742,10 @@ VkAccelerationStructureBuildSizesInfoKHR Device::getBuildSizesInfo(const AsBuild
 
     VkAccelerationStructureBuildGeometryInfoKHR buildInfo{
         .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
-        .type = info.geometryType == VK_GEOMETRY_TYPE_INSTANCES_KHR
+        .type = info.geometryType == GEOMETRY_TYPE::INSTANCES
             ? VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR
             : VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-        .flags = info.buildFlags,        
+        .flags = (VkBuildAccelerationStructureFlagsKHR)(uint32_t)info.buildFlags,        
         .geometryCount = (uint32_t) geometries.size(),
         .pGeometries = geometries.data(),
     };
@@ -3747,7 +3758,12 @@ VkAccelerationStructureBuildSizesInfoKHR Device::getBuildSizesInfo(const AsBuild
         info.primitiveCounts.data(),
         &sizeInfo
     );
-    return sizeInfo;
+
+    return {
+        sizeInfo.accelerationStructureSize,
+        sizeInfo.updateScratchSize,
+        sizeInfo.buildScratchSize
+    };
 }
 
 // CommandBuffer CommandBuffer::buildAccelerationStructures(const AsBuildInfoTriangles& info)
@@ -3936,50 +3952,50 @@ VkAccelerationStructureBuildSizesInfoKHR Device::getBuildSizesInfo(const AsBuild
 
 //     return *this;
 // }
-CommandBuffer CommandBuffer::buildAccelerationStructures(const AsBuildInfoInstances& info) 
-{
-    VkAccelerationStructureBuildGeometryInfoKHR buildInfo = {
-        .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
-        .type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,
-        .flags = info.buildFlags,
-        .mode = info.srcAs ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
-        .srcAccelerationStructure = info.srcAs ? info.srcAs.impl().vkAccelStruct : VK_NULL_HANDLE,
-        .dstAccelerationStructure = info.dstAs.impl().vkAccelStruct,
-        .scratchData = {.deviceAddress = info.scratchBuffer.deviceAddress()},
-    };
+// CommandBuffer CommandBuffer::buildAccelerationStructures(const AsBuildInfoInstances& info) 
+// {
+//     VkAccelerationStructureBuildGeometryInfoKHR buildInfo = {
+//         .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
+//         .type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,
+//         .flags = info.buildFlags,
+//         .mode = info.srcAs ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
+//         .srcAccelerationStructure = info.srcAs ? info.srcAs.impl().vkAccelStruct : VK_NULL_HANDLE,
+//         .dstAccelerationStructure = info.dstAs.impl().vkAccelStruct,
+//         .scratchData = {.deviceAddress = info.scratchBuffer.deviceAddress()},
+//     };
 
-    ASSERT_(info.geometries.size() == 1); 
-    std::vector<VkAccelerationStructureGeometryKHR> geometries(1, {
-        .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
-        .geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR,
-    });
+//     ASSERT_(info.geometries.size() == 1); 
+//     std::vector<VkAccelerationStructureGeometryKHR> geometries(1, {
+//         .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
+//         .geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR,
+//     });
 
-    VkAccelerationStructureBuildRangeInfoKHR rangeInfo = {
-        .primitiveCount = info.geometries[0].instanceCount
-    };
+//     VkAccelerationStructureBuildRangeInfoKHR rangeInfo = {
+//         .primitiveCount = info.geometries[0].instanceCount
+//     };
 
-    buildInfo.geometryCount = 1;
-    buildInfo.pGeometries = geometries.data();
+//     buildInfo.geometryCount = 1;
+//     buildInfo.pGeometries = geometries.data();
 
-    auto& dst = geometries[0].geometry.instances;
-    auto& src = info.geometries[0].instanceInput;
+//     auto& dst = geometries[0].geometry.instances;
+//     auto& src = info.geometries[0].instanceInput;
 
-    ASSERT_(src.buffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
-    ASSERT_(src.buffer.deviceAddress() % 8 == 0);   // VUID
-    dst.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
-    dst.arrayOfPointers = VK_FALSE;
-    dst.data.deviceAddress = src.buffer.deviceAddress();
+//     ASSERT_((uint32_t)src.buffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
+//     ASSERT_(src.buffer.deviceAddress() % 8 == 0);   // VUID
+//     dst.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+//     dst.arrayOfPointers = VK_FALSE;
+//     dst.data.deviceAddress = src.buffer.deviceAddress();
     
-    VkAccelerationStructureBuildRangeInfoKHR* pRangeInfos[] = {&rangeInfo};
-    vkCmdBuildAccelerationStructuresKHR_(
-        impl().vkCmdBuffer,
-        1,
-        &buildInfo,
-        pRangeInfos
-    );
+//     VkAccelerationStructureBuildRangeInfoKHR* pRangeInfos[] = {&rangeInfo};
+//     vkCmdBuildAccelerationStructuresKHR_(
+//         impl().vkCmdBuffer,
+//         1,
+//         &buildInfo,
+//         pRangeInfos
+//     );
 
-    return *this;
-}
+//     return *this;
+// }
 
 CommandBuffer CommandBuffer::buildAccelerationStructures(const AsBuildInfo& info) 
 {
@@ -4169,18 +4185,18 @@ CommandBuffer CommandBuffer::buildAccelerationStructures(const std::vector<AsBui
 
         size_t geometryCount = srcInfo.primitiveCounts.size();
         ASSERT_(geometryCount > 0);
-        ASSERT_(geometryCount == 1 || srcInfo.geometryType != VK_GEOMETRY_TYPE_INSTANCES_KHR);
+        ASSERT_(geometryCount == 1 || srcInfo.geometryType != GEOMETRY_TYPE::INSTANCES);
 
         dstGeometries.resize(geometryCount, {
             .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
-            .geometryType = srcInfo.geometryType,
+            .geometryType = (VkGeometryTypeKHR)(uint32_t)srcInfo.geometryType,
         });
         rangeInfos.resize(geometryCount);
 
-        dstInfo.type = srcInfo.geometryType == VK_GEOMETRY_TYPE_INSTANCES_KHR
+        dstInfo.type = srcInfo.geometryType == GEOMETRY_TYPE::INSTANCES
             ? VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR
             : VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-        dstInfo.flags = srcInfo.buildFlags;
+        dstInfo.flags = (VkBuildAccelerationStructureFlagsKHR)(uint32_t)srcInfo.buildFlags;
         dstInfo.mode = srcInfo.srcAs ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
         dstInfo.srcAccelerationStructure = srcInfo.srcAs ? srcInfo.srcAs.impl().vkAccelStruct : VK_NULL_HANDLE;
         dstInfo.dstAccelerationStructure = srcInfo.dstAs.impl().vkAccelStruct;
@@ -4217,11 +4233,11 @@ CommandBuffer CommandBuffer::buildAccelerationStructures(const std::vector<AsBui
 
                 if constexpr (std::is_same_v<T, AsBuildInfo::Triangles>) 
                 {
-                    dstGeometries[j].flags = inputs.eachGeometry.empty() ? 0 : inputs.eachGeometry[j].flags;
+                    dstGeometries[j].flags = (VkGeometryFlagsKHR)(inputs.eachGeometry.empty() ? 0u : (uint32_t)inputs.eachGeometry[j].flags);
 
                     auto& dstTriangles = dstGeometries[j].geometry.triangles;
                     auto& [vtxBuffer, vtxStride] = useCommonInput ? inputs.vertexInput : inputs.eachGeometry[j].vertexInput;
-                    ASSERT_(vtxBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
+                    ASSERT_((uint32_t)vtxBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
                     ASSERT_(vtxBuffer.deviceAddress() % 4 == 0);   // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03711
                     ASSERT_(vtxStride % 4 == 0);                   // VUID-VkAccelerationStructureGeometryTrianglesDataKHR-vertexStride-03735
                     
@@ -4255,7 +4271,7 @@ CommandBuffer CommandBuffer::buildAccelerationStructures(const std::vector<AsBui
                     auto& [idxBuffer, idxStride] = useCommonInput ? inputs.indexInput : inputs.eachGeometry[j].indexInput;
                     if (idxBuffer)
                     {
-                        ASSERT_(idxBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
+                        ASSERT_((uint32_t)idxBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
                         ASSERT_(idxStride == 2 || idxStride == 4);
                         ASSERT_((idxStride == 2 && idxBuffer.deviceAddress() % 2 == 0) ||
                             (idxStride == 4 && idxBuffer.deviceAddress() % 4 == 0) );  // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03712
@@ -4276,7 +4292,7 @@ CommandBuffer CommandBuffer::buildAccelerationStructures(const std::vector<AsBui
 
                     if (!inputs.eachGeometry.empty() && inputs.eachGeometry[j].transformBuffer)
                     {
-                        ASSERT_(inputs.eachGeometry[j].transformBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
+                        ASSERT_((uint32_t)inputs.eachGeometry[j].transformBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
                         dstTriangles.transformData.deviceAddress = inputs.eachGeometry[j].transformBuffer.deviceAddress();
                         rangeInfo.transformOffset = 0;
                         ASSERT_(dstTriangles.transformData.deviceAddress % 16 == 0); // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03810
@@ -4285,11 +4301,11 @@ CommandBuffer CommandBuffer::buildAccelerationStructures(const std::vector<AsBui
                 } 
                 else if constexpr (std::is_same_v<T, AsBuildInfo::Aabbs>) 
                 {
-                    dstGeometries[j].flags = inputs.eachGeometry.empty() ? 0 : inputs.eachGeometry[j].flags;
+                    dstGeometries[j].flags = (VkGeometryFlagsKHR)(inputs.eachGeometry.empty() ? 0u : (uint32_t)inputs.eachGeometry[j].flags);
 
                     auto& dstAabbs = dstGeometries[j].geometry.aabbs;
                     auto& srcAabbs = useCommonInput ? inputs.aabbInput : inputs.eachGeometry[j].aabbInput;
-                    ASSERT_(srcAabbs.buffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
+                    ASSERT_((uint32_t)srcAabbs.buffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
                     ASSERT_(srcAabbs.buffer.deviceAddress() % 8 == 0);   // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03714
                     ASSERT_(srcAabbs.stride % 8 == 0);                   // VUID-VkAccelerationStructureGeometryAabbsDataKHR-stride-03545
                     
@@ -4306,7 +4322,7 @@ CommandBuffer CommandBuffer::buildAccelerationStructures(const std::vector<AsBui
                 {
                     auto& dstInstances = dstGeometries[j].geometry.instances;
                     auto& srcInstances = inputs.instanceInput;
-                    ASSERT_(srcInstances.buffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
+                    ASSERT_((uint32_t)srcInstances.buffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
                     ASSERT_(srcInstances.buffer.deviceAddress() % 16 == 0);   // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03715
                     
                     dstInstances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;

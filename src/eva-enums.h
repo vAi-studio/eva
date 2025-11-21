@@ -18,19 +18,36 @@ inline enum_type& operator|=(enum_type& lhs, enum_type rhs)                \
 namespace eva {
 
 
-enum class IMAGE_USAGE : uint32_t {
-    TRANSFER_SRC                        = 0x00000001,
-    TRANSFER_DST                        = 0x00000002,
-    SAMPLED                             = 0x00000004,
-    STORAGE                             = 0x00000008,
-    COLOR_ATTACHMENT                    = 0x00000010,
-    DEPTH_STENCIL_ATTACHMENT            = 0x00000020,
-    TRANSIENT_ATTACHMENT                = 0x00000040,
-    INPUT_ATTACHMENT                    = 0x00000080,
-    FRAGMENT_SHADING_RATE_ATTACHMENT    = 0x00000100,
-    HOST_TRANSFER                       = 0x00400000,
+enum Result : int32_t {
+    SUCCESS                                 = 0,
+    NOT_READY                               = 1,
+    TIMEOUT                                 = 2,
+    EVENT_SET                               = 3,
+    EVENT_RESET                             = 4,
+    INCOMPLETE                              = 5,
+    ERROR_OUT_OF_HOST_MEMORY                = -1,
+    ERROR_OUT_OF_DEVICE_MEMORY              = -2,
+    ERROR_INITIALIZATION_FAILED             = -3,
+    ERROR_DEVICE_LOST                       = -4,
+    ERROR_MEMORY_MAP_FAILED                 = -5,
+    ERROR_LAYER_NOT_PRESENT                 = -6,
+    ERROR_EXTENSION_NOT_PRESENT             = -7,
+    ERROR_FEATURE_NOT_PRESENT               = -8,
+    ERROR_INCOMPATIBLE_DRIVER               = -9,
+    ERROR_TOO_MANY_OBJECTS                  = -10,
+    ERROR_FORMAT_NOT_SUPPORTED              = -11,
+    ERROR_FRAGMENTED_POOL                   = -12,
+    ERROR_UNKNOWN                           = -13,
+    ERROR_OUT_OF_POOL_MEMORY                = -1000069000,
+    ERROR_INVALID_EXTERNAL_HANDLE           = -1000072003,
+    ERROR_FRAGMENTATION                     = -1000161000,
+    ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS    = -1000257000,
+    PIPELINE_COMPILE_REQUIRED               = 1000297000,
+    ERROR_SURFACE_LOST                      = -1000000000,
+    ERROR_NATIVE_WINDOW_IN_USE              = -1000000001,
+    SUBOPTIMAL                              = 1000001003,
+    ERROR_OUT_OF_DATE                       = -1000001004,
 };
-DEFINE_OPERATOR_OR(IMAGE_USAGE)
 
 
 enum class IMAGE_LAYOUT : uint32_t {
@@ -210,6 +227,55 @@ enum class IMAGE_VIEW_TYPE : uint32_t {
 };
 
 
+enum class COMPARE_OP : uint32_t {
+    NEVER = 0,
+    LESS = 1,
+    EQUAL = 2,
+    LESS_OR_EQUAL = 3,
+    GREATER = 4,
+    NOT_EQUAL = 5,
+    GREATER_OR_EQUAL = 6,
+    ALWAYS = 7,
+    MAX_ENUM = 0x7FFFFFFF,
+};
+
+
+enum class BORDER_COLOR : uint32_t {
+    FLOAT_TRANSPARENT_BLACK = 0,
+    INT_TRANSPARENT_BLACK = 1,
+    FLOAT_OPAQUE_BLACK = 2,
+    INT_OPAQUE_BLACK = 3,
+    FLOAT_OPAQUE_WHITE = 4,
+    INT_OPAQUE_WHITE = 5,
+    MAX_ENUM = 0x7FFFFFFF,
+};
+
+
+enum class FILTER : uint32_t {
+    NEAREST = 0,
+    LINEAR = 1,
+    CUBIC = 1000015000,
+    MAX_ENUM = 0x7FFFFFFF,
+};
+
+
+enum class SAMPLER_ADDRESS_MODE : uint32_t {
+    REPEAT = 0,
+    MIRRORED_REPEAT = 1,
+    CLAMP_TO_EDGE = 2,
+    CLAMP_TO_BORDER = 3,
+    MIRROR_CLAMP_TO_EDGE = 4,
+    MAX_ENUM = 0x7FFFFFFF,
+};
+
+
+enum class SAMPLER_MIPMAP_MODE : uint32_t {
+    NEAREST = 0,
+    LINEAR = 1,
+    MAX_ENUM = 0x7FFFFFFF,
+};
+
+
 enum class DESCRIPTOR_TYPE : uint32_t {
     SAMPLER                         = 0,
     COMBINED_IMAGE_SAMPLER          = 1,
@@ -227,6 +293,13 @@ enum class DESCRIPTOR_TYPE : uint32_t {
     MAX_ENUM                        = 0x7FFFFFFF,
 };
 
+
+enum class PIPELINE_BIND_POINT : uint32_t {
+    GRAPHICS = 0,
+    COMPUTE = 1,
+    RAY_TRACING = 1000165000,
+    MAX_ENUM = 0x7FFFFFFF,
+};
 
 
 enum class ACCESS : uint64_t {
@@ -259,7 +332,6 @@ enum class ACCESS : uint64_t {
     TRANSFORM_FEEDBACK_WRITE              =     0x02000000ULL,
     TRANSFORM_FEEDBACK_COUNTER_READ       =     0x04000000ULL,
     TRANSFORM_FEEDBACK_COUNTER_WRITE      =     0x08000000ULL,
-#ifdef VULKAN_VERSION_1_3
     SHADER_SAMPLED_READ                   =    0x100000000ULL,
     SHADER_STORAGE_READ                   =    0x200000000ULL,
     SHADER_STORAGE_WRITE                  =    0x400000000ULL,
@@ -273,79 +345,62 @@ enum class ACCESS : uint64_t {
     OPTICAL_FLOW_WRITE                    =  0x80000000000ULL,
     MICROMAP_READ                         = 0x100000000000ULL,
     MICROMAP_WRITE                        = 0x200000000000ULL,
-#endif
 };
 DEFINE_OPERATOR_OR(ACCESS)
 
 
+enum class IMAGE_CREATE : uint32_t {
+    NONE                                = 0x00000000,
+    SPARSE_BINDING                      = 0x00000001,
+    SPARSE_RESIDENCY                    = 0x00000002,
+    SPARSE_ALIASED                      = 0x00000004,
+    MUTABLE_FORMAT                      = 0x00000008,
+    CUBE_COMPATIBLE                     = 0x00000010,
+    SPLIT_INSTANCE_BIND_REGIONS         = 0x00000040,
+    BLOCK_TEXEL_VIEW_COMPATIBLE         = 0x00000080,
+    EXTENDED_USAGE                      = 0x00000100,
+    DISJOINT                            = 0x00000200,
+    ALIAS                               = 0x00000400,
+    PROTECTED                           = 0x00000800,
+    SAMPLE_LOCATIONS_COMPATIBLE_DEPTH   = 0x00001000,
+    SUBSAMPLED                          = 0x00004000,
+};
+DEFINE_OPERATOR_OR(IMAGE_CREATE)
+
+
 enum class IMAGE_USAGE : uint32_t {
-    VK_IMAGE_USAGE_TRANSFER_SRC_BIT = 0x00000001,
-    VK_IMAGE_USAGE_TRANSFER_DST_BIT = 0x00000002,
-    VK_IMAGE_USAGE_SAMPLED_BIT = 0x00000004,
-    VK_IMAGE_USAGE_STORAGE_BIT = 0x00000008,
-    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT = 0x00000010,
-    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT = 0x00000020,
-    VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT = 0x00000040,
-    VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT = 0x00000080,
-    VK_IMAGE_USAGE_HOST_TRANSFER_BIT = 0x00400000,
-    VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR = 0x00000400,
-    VK_IMAGE_USAGE_VIDEO_DECODE_SRC_BIT_KHR = 0x00000800,
-    VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR = 0x00001000,
-    VK_IMAGE_USAGE_FRAGMENT_DENSITY_MAP_BIT_EXT = 0x00000200,
-    VK_IMAGE_USAGE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR = 0x00000100,
-    VK_IMAGE_USAGE_VIDEO_ENCODE_DST_BIT_KHR = 0x00002000,
-    VK_IMAGE_USAGE_VIDEO_ENCODE_SRC_BIT_KHR = 0x00004000,
-    VK_IMAGE_USAGE_VIDEO_ENCODE_DPB_BIT_KHR = 0x00008000,
-    VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT = 0x00080000,
-    VK_IMAGE_USAGE_INVOCATION_MASK_BIT_HUAWEI = 0x00040000,
-    VK_IMAGE_USAGE_SAMPLE_WEIGHT_BIT_QCOM = 0x00100000,
-    VK_IMAGE_USAGE_SAMPLE_BLOCK_MATCH_BIT_QCOM = 0x00200000,
-    VK_IMAGE_USAGE_TENSOR_ALIASING_BIT_ARM = 0x00800000,
-    VK_IMAGE_USAGE_TILE_MEMORY_BIT_QCOM = 0x08000000,
-    VK_IMAGE_USAGE_VIDEO_ENCODE_QUANTIZATION_DELTA_MAP_BIT_KHR = 0x02000000,
-    VK_IMAGE_USAGE_VIDEO_ENCODE_EMPHASIS_MAP_BIT_KHR = 0x04000000,
-    VK_IMAGE_USAGE_SHADING_RATE_IMAGE_BIT_NV = VK_IMAGE_USAGE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR,
-    VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT = VK_IMAGE_USAGE_HOST_TRANSFER_BIT,
-    VK_IMAGE_USAGE_FLAG_BITS_MAX_ENUM = 0x7FFFFFFF
+    TRANSFER_SRC                        = 0x00000001,
+    TRANSFER_DST                        = 0x00000002,
+    SAMPLED                             = 0x00000004,
+    STORAGE                             = 0x00000008,
+    COLOR_ATTACHMENT                    = 0x00000010,
+    DEPTH_STENCIL_ATTACHMENT            = 0x00000020,
+    TRANSIENT_ATTACHMENT                = 0x00000040,
+    INPUT_ATTACHMENT                    = 0x00000080,
+    FRAGMENT_SHADING_RATE_ATTACHMENT    = 0x00000100,
+    HOST_TRANSFER                       = 0x00400000,
 };
+DEFINE_OPERATOR_OR(IMAGE_USAGE)
 
 
-enum class IMAGE_TILING : uint32_t {
+enum class MEMORY_PROPERTY : uint32_t {
+    DEVICE_LOCAL        = 0x00000001,
+    HOST_VISIBLE       = 0x00000002,
+    HOST_COHERENT      = 0x00000004,
+    HOST_CACHED        = 0x00000008,
+    LAZILY_ALLOCATED   = 0x00000010,
+    PROTECTED          = 0x00000020,    
 };
+DEFINE_OPERATOR_OR(MEMORY_PROPERTY)
 
 
-enum class IMAGE_TILING : uint32_t {
+enum class QUEUE : uint32_t {
+    GRAPHICS    = 0x00000001,
+    COMPUTE     = 0x00000002,
+    TRANSFER    = 0x00000004,
+    MAX_ENUM    = 0x7FFFFFFF,
 };
-
-
-enum class IMAGE_TILING : uint32_t {
-};
-
-
-enum class SHADER_STAGE : uint32_t {
-    NONE                      = 0x00000000,
-    VERTEX                    = 0x00000001,
-    TESSELLATION_CONTROL      = 0x00000002,
-    TESSELLATION_EVALUATION   = 0x00000004,
-    GEOMETRY                  = 0x00000008,
-    FRAGMENT                  = 0x00000010,
-    ALL_GRAPHICS              = 0x0000001F,
-    COMPUTE                   = 0x00000020,
-    TASK                      = 0x00000040,
-    MESH                      = 0x00000080,
-    RAYGEN                    = 0x00000100,
-    ANY_HIT                   = 0x00000200,
-    CLOSEST_HIT               = 0x00000400,
-    MISS                      = 0x00000800,
-    INTERSECTION              = 0x00001000,
-    CALLABLE                  = 0x00002000,
-    ALL                       = 0x7FFFFFFF,
-};
-DEFINE_OPERATOR_OR(SHADER_STAGE)
-DEFINE_OPERATOR_OR_ASSIGN(SHADER_STAGE)
-
-
-
+DEFINE_OPERATOR_OR(QUEUE)
 
 
 enum class PIPELINE_STAGE : uint64_t {
@@ -376,7 +431,6 @@ enum class PIPELINE_STAGE : uint64_t {
     FRAGMENT_DENSITY_PROCESS          =     0x00800000ULL,
     TRANSFORM_FEEDBACK                =     0x01000000ULL,
     ACCELERATION_STRUCTURE_BUILD      =     0x02000000ULL,
-#ifdef VULKAN_VERSION_1_3
     VIDEO_DECODE                      =     0x04000000ULL,
     VIDEO_ENCODE                      =     0x08000000ULL,
     ACCELERATION_STRUCTURE_COPY       =     0x10000000ULL,
@@ -390,10 +444,138 @@ enum class PIPELINE_STAGE : uint64_t {
     VERTEX_ATTRIBUTE_INPUT            =   0x2000000000ULL,
     PRE_RASTERIZATION_SHADERS         =   0x4000000000ULL,
     CONVERT_COOPERATIVE_VECTOR_MATRIX = 0x100000000000ULL,
-#endif
 };
 DEFINE_OPERATOR_OR(PIPELINE_STAGE)
 
+
+enum class BUFFER_USAGE : uint32_t {
+    TRANSFER_SRC                                    = 0x00000001,
+    TRANSFER_DST                                    = 0x00000002,
+    UNIFORM_TEXEL_BUFFER                            = 0x00000004,
+    STORAGE_TEXEL_BUFFER                            = 0x00000008,
+    UNIFORM_BUFFER                                  = 0x00000010,
+    STORAGE_BUFFER                                  = 0x00000020,
+    INDEX_BUFFER                                    = 0x00000040,
+    VERTEX_BUFFER                                   = 0x00000080,
+    INDIRECT_BUFFER                                 = 0x00000100,
+    CONDITIONAL_RENDERING                           = 0x00000200,
+    SHADER_BINDING_TABLE                            = 0x00000400,
+    TRANSFORM_FEEDBACK_BUFFER                       = 0x00000800,
+    TRANSFORM_FEEDBACK_COUNTER_BUFFER               = 0x00001000,
+    SHADER_DEVICE_ADDRESS                           = 0x00020000,
+    ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY    = 0x00080000,
+    ACCELERATION_STRUCTURE_STORAGE                  = 0x00100000,
+};
+DEFINE_OPERATOR_OR(BUFFER_USAGE)
+
+
+enum class SHADER_STAGE : uint32_t {
+    NONE                      = 0x00000000,
+    VERTEX                    = 0x00000001,
+    TESSELLATION_CONTROL      = 0x00000002,
+    TESSELLATION_EVALUATION   = 0x00000004,
+    GEOMETRY                  = 0x00000008,
+    FRAGMENT                  = 0x00000010,
+    ALL_GRAPHICS              = 0x0000001F,
+    COMPUTE                   = 0x00000020,
+    TASK                      = 0x00000040,
+    MESH                      = 0x00000080,
+    RAYGEN                    = 0x00000100,
+    ANY_HIT                   = 0x00000200,
+    CLOSEST_HIT               = 0x00000400,
+    MISS                      = 0x00000800,
+    INTERSECTION              = 0x00001000,
+    CALLABLE                  = 0x00002000,
+    ALL                       = 0x7FFFFFFF,
+};
+DEFINE_OPERATOR_OR(SHADER_STAGE)
+DEFINE_OPERATOR_OR_ASSIGN(SHADER_STAGE)
+
+
+enum class DESCRIPTOR_POOL_CREATE : uint32_t {
+    NONE                        = 0,
+    FREE_DESCRIPTOR_SET         = 0x00000001,
+    UPDATE_AFTER_BIND           = 0x00000002,
+    HOST_ONLY                   = 0x00000004,
+};
+DEFINE_OPERATOR_OR(DESCRIPTOR_POOL_CREATE)
+
+
+enum class COMMAND_POOL_CREATE : uint32_t {
+    NONE                        = 0,
+    TRANSIENT                   = 0x00000001,
+    RESET_COMMAND_BUFFER        = 0x00000002,
+    PROTECTED                   = 0x00000004,
+};
+DEFINE_OPERATOR_OR(COMMAND_POOL_CREATE)
+
+
+enum class COMMAND_BUFFER_USAGE : uint32_t {
+    NONE                        = 0,
+    ONE_TIME_SUBMIT             = 0x00000001,
+    RENDER_PASS_CONTINUE        = 0x00000002,
+    SIMULTANEOUS_USE            = 0x00000004,
+};
+DEFINE_OPERATOR_OR(COMMAND_BUFFER_USAGE)
+
+
+enum class PRESENT_MODE : uint32_t {
+    IMMEDIATE               = 0,
+    MAILBOX                 = 1,
+    FIFO                    = 2,
+    FIFO_RELAXED            = 3,
+    SHARED_DEMAND_REFRESH   = 1000111000,
+    SHARED_CONTINUOUS_REFRESH = 1000111001,
+    MAX_ENUM                = 0x7FFFFFFF,
+};
+
+
+enum class COLOR_SPACE : uint32_t {
+    SRGB_NONLINEAR          = 0,
+    DISPLAY_P3_NONLINEAR    = 1000104001,
+    EXTENDED_SRGB_LINEAR    = 1000104002,
+    DCI_P3_LINEAR           = 1000104003,
+    DCI_P3_NONLINEAR        = 1000104004,
+    BT709_LINEAR            = 1000104005,
+    BT709_NONLINEAR         = 1000104006,
+    BT2020_LINEAR           = 1000104007,
+    HDR10_ST2084            = 1000104008,
+    DOLBYVISION             = 1000104009,
+    HDR10_HLG               = 1000104010,
+    MAX_ENUM                = 0x7FFFFFFF,
+};
+
+
+enum class GEOMETRY_TYPE : uint32_t {
+    TRIANGLES   = 0,
+    AABBS       = 1,
+    INSTANCES   = 2,
+    MAX_ENUM    = 0x7FFFFFFF,
+};
+
+
+enum class ACCELERATION_STRUCTURE_TYPE : uint32_t {
+    TOP_LEVEL = 0,
+    BOTTOM_LEVEL = 1,
+    GENERIC_KHR = 2,
+};
+
+
+enum class GEOMETRY : uint32_t {
+    NONE    = 0,
+    OPAQUE  = 0x00000001,
+    NO_DUPLICATE_ANY_HIT_INVOCATION  = 0x00000002,
+};
+
+
+enum class BUILD_ACCELERATION_STRUCTURE : uint32_t {
+    NONE = 0,
+    ALLOW_UPDATE = 0x00000001,
+    ALLOW_COMPACTION = 0x00000002,
+    PREFER_FAST_TRACE = 0x00000004,
+    PREFER_FAST_BUILD = 0x00000008,
+    LOW_MEMORY = 0x00000010,
+};
 
 
 
