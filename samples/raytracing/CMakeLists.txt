@@ -13,6 +13,7 @@ add_executable(${PROJECT_NAME}
 
     # shaders (auto-compiled)
     shaders/raygen.rgen
+    shaders/miss.rmiss
     shaders/chit.rchit
 )
 
