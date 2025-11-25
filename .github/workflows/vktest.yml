@@ -1,0 +1,50 @@
+name: ae2f-workflow
+on:
+  push:
+    branches: [master]
+  
+jobs:
+  test-compiler-majours:
+    runs-on: ${{ matrix.os }}
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+        c:  [-DCMAKE_C_COMPILER=gcc, -DCMAKE_C_COMPILER=clang, \"\"]
+        conf: [Release, Debug]
+
+        include: 
+          - c: -DCMAKE_C_COMPILER=clang
+            cc: -DCMAKE_CXX_COMPILER=clang++
+            
+          - c: -DCMAKE_C_COMPILER=gcc
+            cc: -DCMAKE_CXX_COMPILER=g++
+            
+          - c: \"\"
+            cc: \"\"
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: 'main'
+        fetch-depth: '1'
+
+    - name: Set reusable strings
+      id: strings
+      shell: bash
+      run: echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT" 
+
+    - name: Install Vulkan SDK and Runtime
+      # You may pin to the exact commit or the version.
+      # uses: jakoch/install-vulkan-sdk-action@f49cea4f9cb2e449e2b3f1082251e9460dd9edc3
+      uses: jakoch/install-vulkan-sdk-action@v1.2.8
+
+    - name: julia-lavapipe
+      # You may pin to the exact commit or the version.
+      # uses: serenity4/julia-lavapipe@7766048527a633aad07558592b713622e04b4f60
+      uses: serenity4/julia-lavapipe@v1
+        
+    - name: Test
+      run: bash ./test.sh ${{ matrix.c }} ${{ matrix.cc }} ${{ matrix.conf }} 
+        
