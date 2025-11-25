@@ -27,13 +27,18 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        ref: 'main'
+        ref: 'master'
         fetch-depth: '1'
-
+        
     - name: Set reusable strings
       id: strings
       shell: bash
       run: echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT" 
+
+    - name: submodule
+      shell: bash
+      run: git submodule init && git submodule update
+      
 
     - name: Install Vulkan SDK and Runtime
       # You may pin to the exact commit or the version.
