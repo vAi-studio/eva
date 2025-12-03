@@ -1,7 +1,6 @@
 #include "eva-runtime.h"
 #include "input.h"
 #include "camera.h"
-#include <vulkan/vulkan_core.h>
 #include <thread>
 #include <chrono>
 #include <cstdio>
@@ -133,7 +132,7 @@ int main()
     - instance0 -> blas0 (2 spheres + 2 cylinders)
     - instance1 -> blas1 (1 large sphere)
     */
-    std::vector<VkAccelerationStructureInstanceKHR> instances(2);
+    std::vector<AccelerationStructureInstance> instances(2);
     
 
     //////////////////////////////////////////////////////////////////////////////
@@ -149,14 +148,14 @@ int main()
     aabbBuffer.unmap();
 
     Buffer stagingBuffer = device.createBuffer({
-        .size = sizeof(VkAccelerationStructureInstanceKHR) * instances.size(),
+        .size = sizeof(AccelerationStructureInstance) * instances.size(),
         .usage = BUFFER_USAGE::TRANSFER_SRC,
         .reqMemProps = MEMORY_PROPERTY::HOST_VISIBLE | MEMORY_PROPERTY::HOST_COHERENT,
     });
     
     // instances buffer must be device local as stated in the spec
     Buffer instanceBuffer = device.createBuffer({
-        .size = sizeof(VkAccelerationStructureInstanceKHR) * instances.size(),
+        .size = sizeof(AccelerationStructureInstance) * instances.size(),
         .usage = BUFFER_USAGE::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY 
                 | BUFFER_USAGE::SHADER_DEVICE_ADDRESS
                 | BUFFER_USAGE::TRANSFER_DST,
@@ -252,7 +251,7 @@ int main()
         .instanceShaderBindingTableRecordOffset = (uint32_t) geometryCountInBlas0,
         .accelerationStructureReference = blas1.deviceAddress()
     }; 
-    memcpy(stagingBuffer.map(), instances.data(), sizeof(VkAccelerationStructureInstanceKHR) * instances.size());
+    memcpy(stagingBuffer.map(), instances.data(), sizeof(AccelerationStructureInstance) * instances.size());
     stagingBuffer.unmap();
 
     blasInfo0.dstAs = blas0;

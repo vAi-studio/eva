@@ -66,29 +66,30 @@ add_library(eva STATIC
 
 # Include directories
 target_include_directories(eva
-    PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-        ${Vulkan_INCLUDE_DIRS}
+PRIVATE
+    ${Vulkan_INCLUDE_DIRS}
+PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 # Link libraries
 target_link_libraries(eva
-    PUBLIC
-        ${Vulkan_LIBRARIES}
-        glfw
-    PRIVATE
-        spirv-reflect-static
+PRIVATE
+    ${Vulkan_LIBRARIES}
+    glfw
+    spirv-reflect-static
 )
 
 # Compiler definitions
 target_compile_definitions(eva
-    PUBLIC
-        GLFW_INCLUDE_VULKAN
+PRIVATE
+    GLFW_INCLUDE_VULKAN
 )
 
 # Android
 if(ANDROID)
-    target_link_libraries(eva PRIVATE
+    target_link_libraries(eva 
+    PRIVATE
         android
     )
 endif()

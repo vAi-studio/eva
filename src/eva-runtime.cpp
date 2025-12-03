@@ -745,6 +745,7 @@ Device Runtime::device(DeviceSettings settings)
 
 struct PNextChain {
     void* head = nullptr;
+    void* tail = nullptr;
 
     struct Block {
         void* ptr{};
@@ -760,6 +761,7 @@ struct PNextChain {
         }
         blocks.clear();
         head = nullptr;
+        tail = nullptr;
     }
 
     void* operator&() { return head; }
@@ -774,8 +776,14 @@ struct PNextChain {
         auto* p = reinterpret_cast<U*>(mem);
         // VkBaseOutStructure(또는 VkBaseInStructure)로 캐스팅해 pNext 연결
         auto* base = reinterpret_cast<VkBaseOutStructure*>(p);
-        base->pNext = reinterpret_cast<VkBaseOutStructure*>(head);
-        head = p;
+        base->pNext = nullptr;
+
+        if (tail) {
+            reinterpret_cast<VkBaseOutStructure*>(tail)->pNext = base;
+        } else {
+            head = p;
+        }
+        tail = p;
         return *p;
     }
 };
@@ -996,6 +1004,10 @@ Device Runtime::createDevice(const DeviceSettings& settings)
 
     PNextChain chain;
     {
+        chain.add(VkPhysicalDeviceFeatures2{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+        });
+
         chain.add(VkPhysicalDeviceSynchronization2Features{
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES,
             .synchronization2 = VK_TRUE,

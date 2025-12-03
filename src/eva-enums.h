@@ -568,6 +568,15 @@ enum class GEOMETRY : uint32_t {
 };
 
 
+enum class GEOMETRY_INSTANCE : uint32_t {
+    NONE                            = 0,
+    TRIANGLE_FACING_CULL_DISABLE    = 0x00000001,
+    TRIANGLE_FLIP_FACING            = 0x00000002,
+    FORCE_OPAQUE                    = 0x00000004,
+    FORCE_NO_OPAQUE                 = 0x00000008,
+};
+
+
 enum class BUILD_ACCELERATION_STRUCTURE : uint32_t {
     NONE = 0,
     ALLOW_UPDATE = 0x00000001,

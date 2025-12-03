@@ -1658,12 +1658,29 @@ inline void operator<<(Submitting&& submitting, void(Waiting))
 
 
 
+
+// directly match VkTransformMatrixKHR
+struct TransformMatrix {
+    float    matrix[3][4];
+};
+
+
+// directly match VkAccelerationStructureInstanceKHR
+struct AccelerationStructureInstance {
+    TransformMatrix     transform;
+    uint32_t            instanceCustomIndex:24;
+    uint32_t            mask:8;
+    uint32_t            instanceShaderBindingTableRecordOffset:24;
+    GEOMETRY_INSTANCE   flags:8;
+    uint64_t            accelerationStructureReference;
+};
+
+
 struct ShaderBindingTable {
     Buffer buffer;
     uint32_t recordSize;
     uint32_t numRecords;
 };
-
 
 
 struct AABB 
