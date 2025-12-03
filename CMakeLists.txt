@@ -45,7 +45,7 @@ if (Vulkan_FOUND)
     set(SPIRV_REFLECT_STATIC_LIB ON CACHE BOOL "Build a SPIRV-Reflect static library")
     # set(SPIRV_REFLECT_EXAMPLES OFF CACHE BOOL "Build the SPIRV-Reflect example programs")
     # set(SPIRV_REFLECT_ENABLE_ASSERTS ON CACHE BOOL "Enable asserts for debugging")
-    add_subdirectory(external/SPIRV-Reflect)
+    add_subdirectory(${EVA_EXTERNAL_DIR}/SPIRV-Reflect)
     message(STATUS "[SPIRV-Reflect] SPIRV-Reflect configuration completed.")
 endif()
 
