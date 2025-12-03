@@ -80,12 +80,6 @@ PRIVATE
     spirv-reflect-static
 )
 
-# Compiler definitions
-target_compile_definitions(eva
-PRIVATE
-    GLFW_INCLUDE_VULKAN
-)
-
 # Android
 if(ANDROID)
     target_link_libraries(eva 
