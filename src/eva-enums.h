@@ -14,6 +14,12 @@ inline enum_type& operator|=(enum_type& lhs, enum_type rhs)                \
     return lhs; \
 }
 
+#define DEFINE_HAS_FLAGS(enum_type) \
+inline constexpr bool hasFlag(enum_type value, enum_type flag)        \
+{ \
+    return (((uint32_t)value & (uint32_t)flag) == (uint32_t)flag); \
+}
+
 
 namespace eva {
 
@@ -347,6 +353,7 @@ enum class ACCESS : uint64_t {
     MICROMAP_WRITE                        = 0x200000000000ULL,
 };
 DEFINE_OPERATOR_OR(ACCESS)
+DEFINE_HAS_FLAGS(ACCESS)
 
 
 enum class IMAGE_CREATE : uint32_t {
@@ -366,6 +373,7 @@ enum class IMAGE_CREATE : uint32_t {
     SUBSAMPLED                          = 0x00004000,
 };
 DEFINE_OPERATOR_OR(IMAGE_CREATE)
+DEFINE_HAS_FLAGS(IMAGE_CREATE)
 
 
 enum class IMAGE_USAGE : uint32_t {
@@ -381,6 +389,7 @@ enum class IMAGE_USAGE : uint32_t {
     HOST_TRANSFER                       = 0x00400000,
 };
 DEFINE_OPERATOR_OR(IMAGE_USAGE)
+DEFINE_HAS_FLAGS(IMAGE_USAGE)
 
 
 enum class MEMORY_PROPERTY : uint32_t {
@@ -392,6 +401,7 @@ enum class MEMORY_PROPERTY : uint32_t {
     PROTECTED          = 0x00000020,    
 };
 DEFINE_OPERATOR_OR(MEMORY_PROPERTY)
+DEFINE_HAS_FLAGS(MEMORY_PROPERTY)
 
 
 enum class QUEUE : uint32_t {
@@ -401,6 +411,7 @@ enum class QUEUE : uint32_t {
     MAX_ENUM    = 0x7FFFFFFF,
 };
 DEFINE_OPERATOR_OR(QUEUE)
+DEFINE_HAS_FLAGS(QUEUE)
 
 
 enum class PIPELINE_STAGE : uint64_t {
@@ -446,6 +457,7 @@ enum class PIPELINE_STAGE : uint64_t {
     CONVERT_COOPERATIVE_VECTOR_MATRIX = 0x100000000000ULL,
 };
 DEFINE_OPERATOR_OR(PIPELINE_STAGE)
+DEFINE_HAS_FLAGS(PIPELINE_STAGE)
 
 
 enum class BUFFER_USAGE : uint32_t {
@@ -467,6 +479,7 @@ enum class BUFFER_USAGE : uint32_t {
     ACCELERATION_STRUCTURE_STORAGE                  = 0x00100000,
 };
 DEFINE_OPERATOR_OR(BUFFER_USAGE)
+DEFINE_HAS_FLAGS(BUFFER_USAGE)
 
 
 enum class SHADER_STAGE : uint32_t {
@@ -490,6 +503,7 @@ enum class SHADER_STAGE : uint32_t {
 };
 DEFINE_OPERATOR_OR(SHADER_STAGE)
 DEFINE_OPERATOR_OR_ASSIGN(SHADER_STAGE)
+DEFINE_HAS_FLAGS(SHADER_STAGE)
 
 
 enum class DESCRIPTOR_POOL_CREATE : uint32_t {
@@ -499,6 +513,7 @@ enum class DESCRIPTOR_POOL_CREATE : uint32_t {
     HOST_ONLY                   = 0x00000004,
 };
 DEFINE_OPERATOR_OR(DESCRIPTOR_POOL_CREATE)
+DEFINE_HAS_FLAGS(DESCRIPTOR_POOL_CREATE)
 
 
 enum class COMMAND_POOL_CREATE : uint32_t {
@@ -508,6 +523,7 @@ enum class COMMAND_POOL_CREATE : uint32_t {
     PROTECTED                   = 0x00000004,
 };
 DEFINE_OPERATOR_OR(COMMAND_POOL_CREATE)
+DEFINE_HAS_FLAGS(COMMAND_POOL_CREATE)
 
 
 enum class COMMAND_BUFFER_USAGE : uint32_t {
@@ -517,6 +533,7 @@ enum class COMMAND_BUFFER_USAGE : uint32_t {
     SIMULTANEOUS_USE            = 0x00000004,
 };
 DEFINE_OPERATOR_OR(COMMAND_BUFFER_USAGE)
+DEFINE_HAS_FLAGS(COMMAND_BUFFER_USAGE)
 
 
 enum class PRESENT_MODE : uint32_t {
@@ -566,6 +583,8 @@ enum class GEOMETRY : uint32_t {
     OPAQUE  = 0x00000001,
     NO_DUPLICATE_ANY_HIT_INVOCATION  = 0x00000002,
 };
+DEFINE_OPERATOR_OR(GEOMETRY)
+DEFINE_HAS_FLAGS(GEOMETRY)
 
 
 enum class GEOMETRY_INSTANCE : uint32_t {
@@ -575,6 +594,8 @@ enum class GEOMETRY_INSTANCE : uint32_t {
     FORCE_OPAQUE                    = 0x00000004,
     FORCE_NO_OPAQUE                 = 0x00000008,
 };
+DEFINE_OPERATOR_OR(GEOMETRY_INSTANCE)
+DEFINE_HAS_FLAGS(GEOMETRY_INSTANCE)
 
 
 enum class BUILD_ACCELERATION_STRUCTURE : uint32_t {
@@ -585,6 +606,8 @@ enum class BUILD_ACCELERATION_STRUCTURE : uint32_t {
     PREFER_FAST_BUILD = 0x00000008,
     LOW_MEMORY = 0x00000010,
 };
+DEFINE_OPERATOR_OR(BUILD_ACCELERATION_STRUCTURE)
+DEFINE_HAS_FLAGS(BUILD_ACCELERATION_STRUCTURE)
 
 
 

@@ -93,35 +93,26 @@ endif()
 # Shader compilation utility function
 ################################################################################
 # Find glslangValidator
-set(EVA_GLSLC "${Vulkan_GLSLC_EXECUTABLE}")
+set(EVA_GLSLC "${Vulkan_GLSLC_EXECUTABLE}" CACHE INTERNAL "Path to glslc compiler")
 if(EVA_GLSLC)
     message(STATUS "[EVA] Found glslc: ${EVA_GLSLC}")
 else()
     message(WARNING "[EVA] glslc not found. Shader compilation will not be available.")
 endif()
 
-# Define shader file extensions
-set(SHADER_EXTENSIONS
-    .vert .frag .comp .geom .tesc .tese
-    .rgen .rint .rahit .rchit .rmiss .rcall
-    .mesh .task .glsl
-)
-
-# Register shader extensions as source file properties
 if(EVA_GLSLC)
-    foreach(EXT ${SHADER_EXTENSIONS})
-        set_source_files_properties(
-            ${CMAKE_CURRENT_SOURCE_DIR}/dummy${EXT}
-            PROPERTIES
-            LANGUAGE C
-        )
-    endforeach()
-
     # Create a function to automatically compile shaders added to targets
     # Usage: eva_auto_compile_shaders(target_name [output_dir])
     function(eva_auto_compile_shaders TARGET_NAME)
         # Optional second argument: output directory
         set(OUTPUT_DIR "${ARGV1}")
+
+        # Define shader extensions locally
+        set(SHADER_EXTENSIONS
+            .vert .frag .comp .geom .tesc .tese
+            .rgen .rint .rahit .rchit .rmiss .rcall
+            .mesh .task .glsl
+        )
 
         get_target_property(TARGET_SOURCES ${TARGET_NAME} SOURCES)
 
