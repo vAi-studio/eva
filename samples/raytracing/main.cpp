@@ -4,6 +4,9 @@
 #include <thread>
 #include <chrono>
 #include <cstdio>
+
+#include <eva-error.h>
+
 using namespace eva;
 
 
@@ -178,8 +181,8 @@ int main()
         .geometryType = GEOMETRY_TYPE::AABBS,
         .primitiveCounts = { 1 },
     };
-    _ASSERT(blasInfo0.primitiveCounts.size() == geometryCountInBlas0);
-    _ASSERT(blasInfo1.primitiveCounts.size() == geometryCountInBlas1);
+    ASSERT_(blasInfo0.primitiveCounts.size() == geometryCountInBlas0);
+    ASSERT_(blasInfo1.primitiveCounts.size() == geometryCountInBlas1);
 
     AsBuildInfo tlasInfo = {
         .buildFlags = BUILD_ACCELERATION_STRUCTURE::PREFER_FAST_TRACE,

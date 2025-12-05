@@ -729,7 +729,7 @@ Device Runtime::device(int gpuIndex)
     if (gpuIndex < 0)
         gpuIndex += (int)impl().devices.size();
         
-    _ASSERT(gpuIndex >= 0 && gpuIndex < (int)impl().devices.size());
+    ASSERT_(gpuIndex >= 0 && gpuIndex < (int)impl().devices.size());
     return impl().devices[gpuIndex];
 }
 

@@ -9,6 +9,8 @@
 #include <memory>
 #include <tuple>
 #include <utility>
+#include <cstring>
+
 #define VULKAN_VERSION_1_3  // TODO: whether to use this or not depends on the system
 
 #include "eva-enums.h"
@@ -29,7 +31,6 @@
 #define EVA_MAX_EXTENSION_NAME_SIZE        256U
 #define EVA_MAX_DESCRIPTION_SIZE           256U
 #define EVA_MAX_MEMORY_HEAPS               16U
-
 
 namespace eva {
 
@@ -1468,6 +1469,8 @@ struct SemaphoreStage {
     const Semaphore sem;
     const PIPELINE_STAGE stage;
 
+    constexpr SemaphoreStage() : sem{}, stage{} {}
+
     SemaphoreStage(
         Semaphore sem, 
         PIPELINE_STAGE stage=PIPELINE_STAGE::ALL_COMMANDS) 
@@ -1599,7 +1602,12 @@ inline Submitting operator<<(Queue queue, CommandBuffer cmdBuffer)
 
 inline Submitting operator<<(Queue queue, std::vector<CommandBuffer>&& cmdBuffers)
 {
-    return Submitting(queue, {{}, std::move(cmdBuffers), {}});
+	
+    return Submitting(queue, SubmissionBatchInfo{
+		    std::vector<SemaphoreStage>{}
+		    , std::move(cmdBuffers)
+		    , std::vector<SemaphoreStage>{}}
+		    );
 }
 
 inline Submitting operator<<(Queue queue, SubmissionBatchInfo&& batch)

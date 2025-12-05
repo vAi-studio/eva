@@ -1,7 +1,9 @@
 #include <array>
 #include <vector>
 #include <spirv_reflect.h>
+#include <memory>
 #include "eva-runtime.h"
+#include "./eva-error.h"
 
 using namespace eva;
 
@@ -35,7 +37,7 @@ std::array<uint32_t, 3> extractWorkGroupSize(const void* pModule)
 
     if (module.spirv_execution_model == SpvExecutionModelGLCompute) 
     {
-        _ASSERT(module.entry_point_count == 1);
+        ASSERT_(module.entry_point_count == 1);
 
         const auto& entryPoint = module.entry_points[0];
         workGroupSize[0] = entryPoint.local_size.x;
@@ -102,7 +104,8 @@ PipelineLayoutDesc extractPipelineLayoutDesc(const void* pModule)
         desc.pushConstant = std::make_unique<PushConstantRange>(
             pcBlock->offset, 
             pcBlock->size,                          // Just use the total size
-            (SHADER_STAGE)(uint32_t)module.shader_stage);
+            (SHADER_STAGE)(uint32_t)module.shader_stage
+	    );
     }
 
     return desc;
