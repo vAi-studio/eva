@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Build options
-option(EVA_BUILD_SAMPLES "Build EVA sample projects" ON)
+option(EVA_BUILD_SAMPLES "Build EVA sample projects" OFF)
 
 # Find Vulkan
 find_package(Vulkan REQUIRED)
@@ -118,6 +118,7 @@ if(EVA_GLSLC)
 
         set(SHADER_FILES)
         foreach(SRC ${TARGET_SOURCES})
+        message(STATUS "[EVA] Checking source file: ${SRC}")
             get_filename_component(EXT ${SRC} LAST_EXT)
             if(EXT IN_LIST SHADER_EXTENSIONS)
                 list(APPEND SHADER_FILES ${SRC})
