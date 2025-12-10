@@ -1469,7 +1469,7 @@ struct SemaphoreStage {
     const Semaphore sem;
     const PIPELINE_STAGE stage;
 
-    constexpr SemaphoreStage() : sem{}, stage{} {}
+    // constexpr SemaphoreStage() : sem{}, stage{} {} <---for why? 윈도우에서 에러
 
     SemaphoreStage(
         Semaphore sem, 

@@ -9,6 +9,11 @@
 
 namespace eva {
 
+struct BufferPoolConfig {
+    int logLevel = 0;  // 0: off, 1: basic, 2: verbose
+};
+
+
 class BufferPool;
 
 struct PooledBuffer
@@ -40,7 +45,10 @@ class BufferPool : public std::enable_shared_from_this<BufferPool>
     size_t totalAllocated = 0;
 
 public:
-    int logLevel = 1;  // 0: off, 1: basic, 2: verbose
+    int logLevel;
+
+    BufferPool(const BufferPoolConfig& config = {}) 
+    : logLevel(config.logLevel) {}
 
     PooledBuffer requestBuffer(
         Device device,
