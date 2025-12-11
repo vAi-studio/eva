@@ -10,7 +10,8 @@
 namespace eva {
 
 struct BufferPoolConfig {
-    int logLevel = 0;  // 0: off, 1: basic, 2: verbose
+    Device device;
+    int logLevel = 2;  // 0: off, 1: basic, 2: verbose
 };
 
 
@@ -38,6 +39,8 @@ class BufferPool : public std::enable_shared_from_this<BufferPool>
 {
     friend struct PooledBuffer;
 
+    Device device;
+
     std::unordered_map<
         BUFFER_USAGE,
         std::multimap<size_t, std::pair<Buffer, MEMORY_PROPERTY>>> bufferPool;
@@ -47,11 +50,10 @@ class BufferPool : public std::enable_shared_from_this<BufferPool>
 public:
     int logLevel;
 
-    BufferPool(const BufferPoolConfig& config = {}) 
-    : logLevel(config.logLevel) {}
+    BufferPool(BufferPoolConfig config) 
+    : device(config.device), logLevel(config.logLevel) {}
 
     PooledBuffer requestBuffer(
-        Device device,
         BUFFER_USAGE usageFlags,
         MEMORY_PROPERTY reqMemProps,
         size_t minSize,
