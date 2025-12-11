@@ -11,7 +11,7 @@ namespace eva {
 
 struct BufferPoolConfig {
     Device device;
-    int logLevel = 0;  // 0: off, 1: basic, 2: verbose
+    uint32_t logLevel = 0;  // 0: off, 1: basic, 2: verbose
 };
 
 
@@ -48,7 +48,7 @@ class BufferPool : public std::enable_shared_from_this<BufferPool>
     size_t totalAllocated = 0;
 
 public:
-    int logLevel;
+    uint32_t logLevel;
 
     BufferPool(BufferPoolConfig config) 
     : device(config.device), logLevel(config.logLevel) {}
