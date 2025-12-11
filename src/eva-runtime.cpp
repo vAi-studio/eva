@@ -1519,6 +1519,15 @@ Queue CommandBuffer::lastSubmittedQueue() const
     return impl().lastSubmittedQueue;
 }
 
+CommandBuffer CommandBuffer::reset(bool keepCapacity)
+{
+    VkCommandBufferResetFlags flag = keepCapacity ? 
+        VkCommandBufferResetFlags(0) :
+        VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT;
+    !vkResetCommandBuffer(impl().vkCmdBuffer, flag);
+    return *this;
+}
+
 CommandBuffer CommandBuffer::begin(COMMAND_BUFFER_USAGE flags)
 {
     VkCommandBufferBeginInfo beginInfo{

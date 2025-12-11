@@ -352,6 +352,8 @@ public:
         lastSubmittedQueue().waitIdle();
     }
 
+    CommandBuffer reset(bool keepCapacity=false);
+
     CommandBuffer begin(
         COMMAND_BUFFER_USAGE flags=COMMAND_BUFFER_USAGE::NONE
     );

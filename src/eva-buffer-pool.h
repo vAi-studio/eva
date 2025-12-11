@@ -11,7 +11,7 @@ namespace eva {
 
 struct BufferPoolConfig {
     Device device;
-    int logLevel = 2;  // 0: off, 1: basic, 2: verbose
+    int logLevel = 0;  // 0: off, 1: basic, 2: verbose
 };
 
 
