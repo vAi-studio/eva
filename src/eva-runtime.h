@@ -13,6 +13,7 @@
 
 #define VULKAN_VERSION_1_3  // TODO: whether to use this or not depends on the system
 
+#include "eva-error.h"
 #include "eva-enums.h"
 
 
@@ -851,14 +852,14 @@ struct ImageDescriptor {
 
 inline ImageDescriptor&& operator/(ImageDescriptor&& image, Sampler sampler) 
 {
-    // ASSERT_(!image.sampler);
+    // EVA_ASSERT(!image.sampler);
     image.sampler = sampler;
     return std::move(image);
 }
 
 inline ImageDescriptor&& operator/(ImageDescriptor&& image, IMAGE_LAYOUT layout) 
 {
-    // ASSERT_(image.imageLayout == IMAGE_LAYOUT::MAX_ENUM);
+    // EVA_ASSERT(image.imageLayout == IMAGE_LAYOUT::MAX_ENUM);
     image.imageLayout = layout;
     return std::move(image);
 }
@@ -1265,10 +1266,10 @@ inline BufferRange Buffer::operator()(uint64_t offset, uint64_t size)
 {    
     if (size == EVA_WHOLE_SIZE) 
     {
-        // ASSERT_(offset < this->size());
+        // EVA_ASSERT(offset < this->size());
         size = this->size() - offset;
     }
-    // else ASSERT_(offset + size <= this->size());
+    // else EVA_ASSERT(offset + size <= this->size());
 
     return {*this, offset, size};
 }

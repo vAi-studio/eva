@@ -62,6 +62,7 @@ add_library(eva STATIC
     src/eva-enums.h
     src/eva-error.h
     src/eva-native-factory.h
+    src/eva-buffer-pool.h
 )
 
 # Include directories

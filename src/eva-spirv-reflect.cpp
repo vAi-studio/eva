@@ -3,7 +3,6 @@
 #include <spirv_reflect.h>
 #include <memory>
 #include "eva-runtime.h"
-#include "./eva-error.h"
 
 using namespace eva;
 
@@ -37,7 +36,7 @@ std::array<uint32_t, 3> extractWorkGroupSize(const void* pModule)
 
     if (module.spirv_execution_model == SpvExecutionModelGLCompute) 
     {
-        ASSERT_(module.entry_point_count == 1);
+        EVA_ASSERT(module.entry_point_count == 1);
 
         const auto& entryPoint = module.entry_points[0];
         workGroupSize[0] = entryPoint.local_size.x;

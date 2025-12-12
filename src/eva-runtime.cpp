@@ -8,11 +8,11 @@
 #include <set>
 #include <algorithm>// std::all_of, std::any_of
 #include <fstream>
-#include "eva-error.h"
 #include "eva-native-factory.h"
 #include "eva-runtime.h"
 
 // #define USE_DEBUG_PRINTF 1
+
 
 
 void* createReflectShaderModule(const eva::SpvBlob& spvBlob);
@@ -70,7 +70,7 @@ static void printQueueFamily(uint32_t qfIndex, uint32_t qCount, VkQueueFlags qFl
 static VkInstance createVkInstance()
 {
     static bool first = true;
-    ASSERT_(first);
+    EVA_ASSERT(first);
     first = false;
 
     uint32_t extensionCount = 0;
@@ -88,7 +88,7 @@ static VkInstance createVkInstance()
             return strcmp(layer, porps.layerName) == 0;
         });
     });
-    ASSERT_(ok);
+    EVA_ASSERT(ok);
     
     VkApplicationInfo appInfo{
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -188,7 +188,7 @@ static std::pair<VkMemoryAllocateInfo, VkMemoryPropertyFlags> getMemoryAllocInfo
             && (spec.memoryTypes[i].propertyFlags & reqMemProps) == reqMemProps) 
             break;
     }
-    ASSERT_(i != spec.memoryTypeCount);
+    EVA_ASSERT(i != spec.memoryTypeCount);
 
     return { 
         {
@@ -729,7 +729,7 @@ Device Runtime::device(int gpuIndex)
     if (gpuIndex < 0)
         gpuIndex += (int)impl().devices.size();
         
-    ASSERT_(gpuIndex >= 0 && gpuIndex < (int)impl().devices.size());
+    EVA_ASSERT(gpuIndex >= 0 && gpuIndex < (int)impl().devices.size());
     return impl().devices[gpuIndex];
 }
 
@@ -911,7 +911,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             throw std::runtime_error("No queue family with Graphics support found.");
         }
     } 
-    ASSERT_(!settings.enableGraphicsQueues || qfIndex[queue_graphics] != uint32_t(-1));
+    EVA_ASSERT(!settings.enableGraphicsQueues || qfIndex[queue_graphics] != uint32_t(-1));
 
     if (settings.enableComputeQueues) 
     {
@@ -938,7 +938,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             }
         }
     } 
-    ASSERT_(!settings.enableComputeQueues || qfIndex[queue_compute] != uint32_t(-1));
+    EVA_ASSERT(!settings.enableComputeQueues || qfIndex[queue_compute] != uint32_t(-1));
 
     if (settings.enableTransferQueues) 
     {
@@ -976,7 +976,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             }
         }
     }
-    ASSERT_(!settings.enableTransferQueues || qfIndex[queue_transfer] != uint32_t(-1));
+    EVA_ASSERT(!settings.enableTransferQueues || qfIndex[queue_transfer] != uint32_t(-1));
     
     std::set<uint32_t> uniqueQfIndices = {
         qfIndex[queue_graphics],
@@ -1204,7 +1204,7 @@ uint32_t Device::queueCount(QueueType type) const
 
 Queue Device::queue(QueueType type, uint32_t index) const 
 { 
-    ASSERT_(impl().qfIndex[type] != uint32_t(-1));
+    EVA_ASSERT(impl().qfIndex[type] != uint32_t(-1));
     Queue q = impl().queues[impl().qfIndex[type]] [index % impl().qCount[type]];
     q._type = type;
     return q;
@@ -1217,14 +1217,14 @@ QueueSelector Device::queue(uint32_t index) const
 
 CommandPool Device::setDefalutCommandPool(QueueType type, CommandPool cmdPool)
 {
-    ASSERT_(impl().qfIndex[type] != uint32_t(-1));
+    EVA_ASSERT(impl().qfIndex[type] != uint32_t(-1));
     impl().defaultCmdPool[type][(uint32_t)cmdPool.impl().flags] = cmdPool;
     return cmdPool;
 }
 
 CommandBuffer Device::newCommandBuffer(QueueType type, COMMAND_POOL_CREATE poolFlags)
 {
-    ASSERT_(impl().qfIndex[type] != uint32_t(-1));
+    EVA_ASSERT(impl().qfIndex[type] != uint32_t(-1));
     if (!impl().defaultCmdPool[type][(uint32_t)poolFlags]) 
         impl().defaultCmdPool[type][(uint32_t)poolFlags] = createCommandPool(type, poolFlags);
     
@@ -1257,8 +1257,8 @@ float Queue::priority() const
 
 Queue Queue::submit(CommandBuffer cmdBuffer)
 {
-    // ASSERT_(cmdBuffer.queueFamilyIndex() == impl().qfIndex); // VUID-vkQueueSubmit-pCommandBuffers-00074
-    ASSERT_(_type == cmdBuffer.type()); // VUID-vkQueueSubmit-pCommandBuffers-00074
+    // EVA_ASSERT(cmdBuffer.queueFamilyIndex() == impl().qfIndex); // VUID-vkQueueSubmit-pCommandBuffers-00074
+    EVA_ASSERT(_type == cmdBuffer.type()); // VUID-vkQueueSubmit-pCommandBuffers-00074
     cmdBuffer.impl().lastSubmittedQueue = *this;
 
     VkSubmitInfo submitInfo{
@@ -1266,15 +1266,15 @@ Queue Queue::submit(CommandBuffer cmdBuffer)
         .commandBufferCount = 1,
         .pCommandBuffers = &cmdBuffer.impl().vkCmdBuffer,
     };
-    !vkQueueSubmit(impl().vkQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    ASSERT_SUCCESS(vkQueueSubmit(impl().vkQueue, 1, &submitInfo, VK_NULL_HANDLE));
     return *this;
 }
 
 Queue Queue::submit(std::vector<CommandBuffer> cmdBuffers)
 {
     for (auto& cmdBuffer : cmdBuffers) {
-        // ASSERT_(cmdBuffer.queueFamilyIndex() == impl().qfIndex); // VUID-vkQueueSubmit-pCommandBuffers-00074
-        ASSERT_(_type == cmdBuffer.type()); // VUID-vkQueueSubmit-pCommandBuffers-00074
+        // EVA_ASSERT(cmdBuffer.queueFamilyIndex() == impl().qfIndex); // VUID-vkQueueSubmit-pCommandBuffers-00074
+        EVA_ASSERT(_type == cmdBuffer.type()); // VUID-vkQueueSubmit-pCommandBuffers-00074
         cmdBuffer.impl().lastSubmittedQueue = *this;
     }
 
@@ -1287,7 +1287,7 @@ Queue Queue::submit(std::vector<CommandBuffer> cmdBuffers)
         .commandBufferCount = (uint32_t)vkCmdBuffers.size(),
         .pCommandBuffers = vkCmdBuffers.data(),
     };
-    !vkQueueSubmit(impl().vkQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    ASSERT_SUCCESS(vkQueueSubmit(impl().vkQueue, 1, &submitInfo, VK_NULL_HANDLE));
     return *this;
 }
 
@@ -1340,8 +1340,8 @@ Queue Queue::submit(std::vector<SubmissionBatchInfo>&& batches, std::optional<Fe
         info.pCommandBufferInfos = cmdBuffers.data() + cmdBufferOffset;
         for (auto& inCmdBuffer : inCmdBuffers) 
         {
-            // ASSERT_(inCmdBuffer.queueFamilyIndex() == impl().qfIndex); // VUID-vkQueueSubmit2-pCommandBuffers-00074
-            ASSERT_(_type == inCmdBuffer.type()); // VUID-vkQueueSubmit2-pCommandBuffers-00074
+            // EVA_ASSERT(inCmdBuffer.queueFamilyIndex() == impl().qfIndex); // VUID-vkQueueSubmit2-pCommandBuffers-00074
+            EVA_ASSERT(_type == inCmdBuffer.type()); // VUID-vkQueueSubmit2-pCommandBuffers-00074
             inCmdBuffer.impl().lastSubmittedQueue = *this;
             cmdBuffers.emplace_back(
                 VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
@@ -1368,8 +1368,8 @@ Queue Queue::submit(std::vector<SubmissionBatchInfo>&& batches, std::optional<Fe
         signalSemOffset += info.signalSemaphoreInfoCount;
     }
 
-    !vkQueueSubmit2(impl().vkQueue, batchCount, submitInfos.data(), 
-        fence ? fence->impl().vkFence : VK_NULL_HANDLE);
+    ASSERT_SUCCESS(vkQueueSubmit2(impl().vkQueue, batchCount, submitInfos.data(),
+        fence ? fence->impl().vkFence : VK_NULL_HANDLE));
 
 #else
     std::vector<VkSubmitInfo> submitInfos(batchCount, {VK_STRUCTURE_TYPE_SUBMIT_INFO});
@@ -1399,8 +1399,8 @@ Queue Queue::submit(std::vector<SubmissionBatchInfo>&& batches, std::optional<Fe
         info.pCommandBuffers = cmdBuffers.data() + cmdBufferOffset;
         for (auto& inCmdBuffer : inCmdBuffers) 
         {
-            // ASSERT_(inCmdBuffer.queueFamilyIndex() == impl().qfIndex); // VUID-vkQueueSubmit-pCommandBuffers-00074
-            ASSERT_(_type == inCmdBuffer.type()); // VUID-vkQueueSubmit-pCommandBuffers-00074
+            // EVA_ASSERT(inCmdBuffer.queueFamilyIndex() == impl().qfIndex); // VUID-vkQueueSubmit-pCommandBuffers-00074
+            EVA_ASSERT(_type == inCmdBuffer.type()); // VUID-vkQueueSubmit-pCommandBuffers-00074
             inCmdBuffer.impl().lastSubmittedQueue = *this;
             cmdBuffers.push_back(inCmdBuffer.impl().vkCmdBuffer);
         }
@@ -1415,8 +1415,8 @@ Queue Queue::submit(std::vector<SubmissionBatchInfo>&& batches, std::optional<Fe
         signalSemOffset += info.signalSemaphoreCount;
     }
 
-    !vkQueueSubmit(impl().vkQueue, batchCount, submitInfos.data(), 
-        fence ? fence->impl().vkFence : VK_NULL_HANDLE);
+    ASSERT_SUCCESS(vkQueueSubmit(impl().vkQueue, batchCount, submitInfos.data(),
+        fence ? fence->impl().vkFence : VK_NULL_HANDLE));
 #endif
 
     return *this;
@@ -1429,7 +1429,7 @@ Queue Queue::submit(std::vector<SubmissionBatchInfo>&& batches)
 
 Queue Queue::waitIdle()
 {
-    !vkQueueWaitIdle(impl().vkQueue);
+    ASSERT_SUCCESS(vkQueueWaitIdle(impl().vkQueue));
     return *this;
 }
 
@@ -1440,7 +1440,7 @@ Queue Queue::waitIdle()
 CommandPool Device::createCommandPool(QueueType type, COMMAND_POOL_CREATE flags)
 {
     uint32_t qfIndex = impl().qfIndex[type];
-    ASSERT_(qfIndex != uint32_t(-1));
+    EVA_ASSERT(qfIndex != uint32_t(-1));
 
     auto vkHandle = create<VkCommandPool>(impl().vkDevice, {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -1524,7 +1524,7 @@ CommandBuffer CommandBuffer::reset(bool keepCapacity)
     VkCommandBufferResetFlags flag = keepCapacity ? 
         VkCommandBufferResetFlags(0) :
         VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT;
-    !vkResetCommandBuffer(impl().vkCmdBuffer, flag);
+    ASSERT_SUCCESS(vkResetCommandBuffer(impl().vkCmdBuffer, flag));
     return *this;
 }
 
@@ -1534,13 +1534,13 @@ CommandBuffer CommandBuffer::begin(COMMAND_BUFFER_USAGE flags)
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = (VkCommandBufferUsageFlags)(uint32_t)flags,
     };
-    !vkBeginCommandBuffer(impl().vkCmdBuffer, &beginInfo);
+    ASSERT_SUCCESS(vkBeginCommandBuffer(impl().vkCmdBuffer, &beginInfo));
     return *this;
 }
 
 CommandBuffer CommandBuffer::end()
 {
-    !vkEndCommandBuffer(impl().vkCmdBuffer);
+    ASSERT_SUCCESS(vkEndCommandBuffer(impl().vkCmdBuffer));
     return *this;
 }
 
@@ -1556,7 +1556,7 @@ CommandBuffer CommandBuffer::bindPipeline(Pipeline pipeline)
         using T = std::decay_t<decltype(pipeline)>;
         if constexpr (std::is_same_v<T, ComputePipeline>) 
         {
-            ASSERT_(type() <= queue_compute);  // VUID-vkCmdBindPipeline-pipelineBindPoint-00777
+            EVA_ASSERT(type() <= queue_compute);  // VUID-vkCmdBindPipeline-pipelineBindPoint-00777
             bindPoint = VK_PIPELINE_BIND_POINT_COMPUTE;
             vkPipeline = pipeline.impl().vkPipeline;
         }
@@ -1566,7 +1566,7 @@ CommandBuffer CommandBuffer::bindPipeline(Pipeline pipeline)
             vkPipeline = pipeline.impl().vkPipeline;
         }
         else 
-            ASSERT_(false); 
+            EVA_ASSERT(false); 
     }, pipeline);
     
     vkCmdBindPipeline(impl().vkCmdBuffer, bindPoint, vkPipeline);
@@ -1611,7 +1611,7 @@ CommandBuffer CommandBuffer::bindDescSets(
         layout = std::get<RaytracingPipeline>(impl().boundPipeline).impl().layout.impl().vkPipeLayout;
     }
     else
-        ASSERT_(false);
+        EVA_ASSERT(false);
 
     vkCmdBindDescriptorSets(
         impl().vkCmdBuffer, bindPoint, 
@@ -1652,7 +1652,7 @@ CommandBuffer CommandBuffer::setPushConstants(
         layout = std::get<RaytracingPipeline>(impl().boundPipeline).impl().layout;
     }
     else
-        ASSERT_(false);
+        EVA_ASSERT(false);
 
     // safe from VUID-vkCmdPushConstants-offset-01796
     // VkShaderStageFlags stageFlags = 0;
@@ -1662,7 +1662,7 @@ CommandBuffer CommandBuffer::setPushConstants(
     //         stageFlags |= (uint32_t) range.stageFlags;  // Check!!
     // }
 
-    ASSERT_(layout.impl().uniquePushConstant != nullptr);
+    EVA_ASSERT(layout.impl().uniquePushConstant != nullptr);
 
     vkCmdPushConstants(
         impl().vkCmdBuffer, 
@@ -1718,7 +1718,7 @@ CommandBuffer CommandBuffer::barrier(
                     srcQueueFamilyIndex = impl().device.impl().qfIndex[barrier.pairedQueue];
                     dstQueueFamilyIndex = queueFamilyIndex();
                 }
-                else ASSERT_(barrier.opType == OwnershipTransferOpType::none);
+                else EVA_ASSERT(barrier.opType == OwnershipTransferOpType::none);
             }
             
             if constexpr (std::is_same_v<T, MemoryBarrier>) 
@@ -1835,7 +1835,7 @@ CommandBuffer CommandBuffer::barrier(
                     srcQueueFamilyIndex = impl().device.impl().qfIndex[barrier.pairedQueue];
                     dstQueueFamilyIndex = queueFamilyIndex();
                 }
-                else ASSERT_(barrier.opType == OwnershipTransferOpType::none);
+                else EVA_ASSERT(barrier.opType == OwnershipTransferOpType::none);
             }
             
             if constexpr (std::is_same_v<T, MemoryBarrier>) 
@@ -1894,17 +1894,17 @@ CommandBuffer CommandBuffer::copyBuffer(
     uint64_t dstOffset,  
     uint64_t size)
 {
-	ASSERT_((uint32_t)src.impl().usage & VK_BUFFER_USAGE_TRANSFER_SRC_BIT); 
-	ASSERT_((uint32_t)dst.impl().usage & VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    ASSERT_(srcOffset < src.size()); // VUID-vkCmdCopyBuffer-srcOffset-00113
-    ASSERT_(dstOffset < dst.size()); // VUID-vkCmdCopyBuffer-dstOffset-00114
+	EVA_ASSERT((uint32_t)src.impl().usage & VK_BUFFER_USAGE_TRANSFER_SRC_BIT); 
+	EVA_ASSERT((uint32_t)dst.impl().usage & VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    EVA_ASSERT(srcOffset < src.size()); // VUID-vkCmdCopyBuffer-srcOffset-00113
+    EVA_ASSERT(dstOffset < dst.size()); // VUID-vkCmdCopyBuffer-dstOffset-00114
 
     if (size == EVA_WHOLE_SIZE)
         size = std::min(src.size() - srcOffset, dst.size() - dstOffset);  
     else 
     {
-        ASSERT_(srcOffset + size <= src.size()); // VUID-vkCmdCopyBuffer-size-00115
-        ASSERT_(dstOffset + size <= dst.size()); // VUID-vkCmdCopyBuffer-size-00116
+        EVA_ASSERT(srcOffset + size <= src.size()); // VUID-vkCmdCopyBuffer-size-00115
+        EVA_ASSERT(dstOffset + size <= dst.size()); // VUID-vkCmdCopyBuffer-size-00116
     }
 
 	VkBufferCopy copyRegion{  
@@ -1932,8 +1932,8 @@ CommandBuffer CommandBuffer::copyBuffer(BufferRange src, BufferRange dst)
 CommandBuffer CommandBuffer::copyImage(
     Image src, Image dst, std::vector<CopyRegion> regions)
 {
-	ASSERT_((uint32_t)src.impl().usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
-	ASSERT_((uint32_t)dst.impl().usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+	EVA_ASSERT((uint32_t)src.impl().usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+	EVA_ASSERT((uint32_t)dst.impl().usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT);
     if (regions.empty()) 
         regions.push_back({});
     
@@ -1942,10 +1942,10 @@ CommandBuffer CommandBuffer::copyImage(
     
     for (const auto& region : regions) 
     {
-        ASSERT_(region.offsetX + region.width <= src.impl().width);
-        ASSERT_(region.offsetY + region.height <= src.impl().height);
-        ASSERT_(region.offsetZ + region.depth <= src.impl().depth);
-        ASSERT_(region.baseLayer + region.layerCount <= src.impl().arrayLayers);
+        EVA_ASSERT(region.offsetX + region.width <= src.impl().width);
+        EVA_ASSERT(region.offsetY + region.height <= src.impl().height);
+        EVA_ASSERT(region.offsetZ + region.depth <= src.impl().depth);
+        EVA_ASSERT(region.baseLayer + region.layerCount <= src.impl().arrayLayers);
         
         copyRegions.emplace_back(VkImageCopy{
             .srcSubresource = {
@@ -1986,8 +1986,8 @@ CommandBuffer CommandBuffer::copyImage(
 CommandBuffer CommandBuffer::copyBufferToImage(
     BufferRange src, Image dst, std::vector<CopyRegion> regions)
 {
-	ASSERT_((uint32_t)src.usage() & VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-	ASSERT_((uint32_t)dst.impl().usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+	EVA_ASSERT((uint32_t)src.usage() & VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+	EVA_ASSERT((uint32_t)dst.impl().usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT);
     if (regions.empty()) 
         regions.push_back({});
     
@@ -1996,10 +1996,10 @@ CommandBuffer CommandBuffer::copyBufferToImage(
     
     for (const auto& region : regions) 
     {
-        ASSERT_(region.offsetX + region.width <= dst.impl().width);
-        ASSERT_(region.offsetY + region.height <= dst.impl().height);
-        ASSERT_(region.offsetZ + region.depth <= dst.impl().depth);
-        ASSERT_(region.baseLayer + region.layerCount <= dst.impl().arrayLayers);
+        EVA_ASSERT(region.offsetX + region.width <= dst.impl().width);
+        EVA_ASSERT(region.offsetY + region.height <= dst.impl().height);
+        EVA_ASSERT(region.offsetZ + region.depth <= dst.impl().depth);
+        EVA_ASSERT(region.baseLayer + region.layerCount <= dst.impl().arrayLayers);
         
         copyRegions.emplace_back(VkBufferImageCopy{
             .bufferOffset = region.bufferOffset + src.offset,
@@ -2035,8 +2035,8 @@ CommandBuffer CommandBuffer::copyBufferToImage(
 CommandBuffer CommandBuffer::copyImageToBuffer(
     Image src, BufferRange dst, std::vector<CopyRegion> regions)
 {
-	ASSERT_((uint32_t)src.impl().usage & VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-	ASSERT_((uint32_t)dst.usage() & VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+	EVA_ASSERT((uint32_t)src.impl().usage & VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+	EVA_ASSERT((uint32_t)dst.usage() & VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     if (regions.empty()) 
         regions.push_back({});
     
@@ -2045,10 +2045,10 @@ CommandBuffer CommandBuffer::copyImageToBuffer(
     
     for (const auto& region : regions) 
     {
-        ASSERT_(region.offsetX + region.width <= src.impl().width);
-        ASSERT_(region.offsetY + region.height <= src.impl().height);
-        ASSERT_(region.offsetZ + region.depth <= src.impl().depth);
-        ASSERT_(region.baseLayer + region.layerCount <= src.impl().arrayLayers);
+        EVA_ASSERT(region.offsetX + region.width <= src.impl().width);
+        EVA_ASSERT(region.offsetY + region.height <= src.impl().height);
+        EVA_ASSERT(region.offsetZ + region.depth <= src.impl().depth);
+        EVA_ASSERT(region.baseLayer + region.layerCount <= src.impl().arrayLayers);
         
         copyRegions.emplace_back(VkBufferImageCopy{
             .bufferOffset = region.bufferOffset + dst.offset,
@@ -2083,9 +2083,9 @@ CommandBuffer CommandBuffer::copyImageToBuffer(
 
 CommandBuffer CommandBuffer::dispatch2(uint32_t numThreadsInX, uint32_t numThreadsInY, uint32_t numThreadsInZ)
 {
-    ASSERT_(type() <= queue_compute);  // VUID-vkCmdDispatch-commandBuffer-cmdpool (Implicit)  
+    EVA_ASSERT(type() <= queue_compute);  // VUID-vkCmdDispatch-commandBuffer-cmdpool (Implicit)  
     auto pipeline = std::get_if<ComputePipeline>(&impl().boundPipeline);
-    ASSERT_(pipeline != nullptr);
+    EVA_ASSERT(pipeline != nullptr);
 
     auto [groupSizeInX, groupSizeInY, groupSizeInZ] = pipeline->impl().workGroupSize;
 
@@ -2099,7 +2099,7 @@ CommandBuffer CommandBuffer::dispatch2(uint32_t numThreadsInX, uint32_t numThrea
 
 CommandBuffer CommandBuffer::dispatch(uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ)
 {
-    ASSERT_(type() <= queue_compute);  // VUID-vkCmdDispatch-commandBuffer-cmdpool (Implicit)  
+    EVA_ASSERT(type() <= queue_compute);  // VUID-vkCmdDispatch-commandBuffer-cmdpool (Implicit)  
     vkCmdDispatch(impl().vkCmdBuffer, groupCountX, groupCountY, groupCountZ);
     return *this;
 }
@@ -2108,7 +2108,7 @@ CommandBuffer CommandBuffer::traceRays(
     ShaderBindingTable hitGroupSbt, uint32_t width, uint32_t height, uint32_t depth)
 {
     auto* rtp = std::get_if<RaytracingPipeline>(&impl().boundPipeline);
-    ASSERT_(rtp != nullptr);
+    EVA_ASSERT(rtp != nullptr);
 
     static VkStridedDeviceAddressRegionKHR callable = {}; // Not used
     const auto& sbt = rtp->impl().sbt;
@@ -2134,7 +2134,7 @@ CommandBuffer CommandBuffer::traceRays(
 CommandBuffer CommandBuffer::traceRays(uint32_t width, uint32_t height, uint32_t depth)
 {
     auto* rtp = std::get_if<RaytracingPipeline>(&impl().boundPipeline);
-    ASSERT_(rtp != nullptr);
+    EVA_ASSERT(rtp != nullptr);
 
     static VkStridedDeviceAddressRegionKHR callable = {}; // Not used
     const auto& sbt = rtp->impl().sbt;
@@ -2184,20 +2184,20 @@ void Device::resetFences(std::vector<Fence> fences)
     for (uint32_t i = 0; i < fences.size(); ++i) 
         vkFences[i] = fences[i].impl().vkFence;
 
-    !vkResetFences(impl().vkDevice, (uint32_t)fences.size(), vkFences.data());
+    ASSERT_SUCCESS(vkResetFences(impl().vkDevice, (uint32_t)fences.size(), vkFences.data()));
 }
 
 Result Fence::wait(bool autoReset, uint64_t timeout) const
 {
     VkResult res = vkWaitForFences(impl().vkDevice, 1, &impl().vkFence, VK_TRUE, timeout);
     if(res==VK_SUCCESS && autoReset)
-        !vkResetFences(impl().vkDevice, 1, &impl().vkFence);
+        ASSERT_SUCCESS(vkResetFences(impl().vkDevice, 1, &impl().vkFence));
     return (Result) res;
 }
 
 void Fence::reset() const
 {
-    !vkResetFences(impl().vkDevice, 1, &impl().vkFence);
+    ASSERT_SUCCESS(vkResetFences(impl().vkDevice, 1, &impl().vkFence));
 }
 
 bool Fence::isSignaled() const
@@ -2256,7 +2256,7 @@ void ShaderModule::discardReflect()
 
 PipelineLayoutDesc ShaderModule::extractPipelineLayoutDesc() const
 {
-    ASSERT_(impl().pModule != nullptr);
+    EVA_ASSERT(impl().pModule != nullptr);
     return ::extractPipelineLayoutDesc(impl().pModule);
 }
 
@@ -2404,7 +2404,7 @@ ComputePipeline Device::createComputePipeline(const ComputePipelineCreateInfo& i
         createTempModule = true;
     }
 
-    ASSERT_(csModule.hasReflect()); 
+    EVA_ASSERT(csModule.hasReflect()); 
 
     auto [sizeX, sizeY, sizeZ] = extractWorkGroupSize(csModule.impl().pModule);
     PipelineLayout layout = info.layout.value_or(createPipelineLayout(csModule.extractPipelineLayoutDesc()));
@@ -2427,10 +2427,10 @@ ComputePipeline Device::createComputePipeline(const ComputePipelineCreateInfo& i
     };
 
     VkPipeline vkHandle;
-    !vkCreateComputePipelines(
-        impl().vkDevice, VK_NULL_HANDLE, 
-        1, &createInfo, 
-        nullptr, &vkHandle);
+    ASSERT_SUCCESS(vkCreateComputePipelines(
+        impl().vkDevice, VK_NULL_HANDLE,
+        1, &createInfo,
+        nullptr, &vkHandle));
 
     auto pImpl = new ComputePipeline::Impl(
         impl().vkDevice,
@@ -2613,9 +2613,9 @@ RaytracingPipeline Device::createRaytracingPipeline(const RaytracingPipelineCrea
     };
 
     VkPipeline vkHandle;
-    !vkCreateRayTracingPipelinesKHR_(
+    ASSERT_SUCCESS(vkCreateRayTracingPipelinesKHR_(
         impl().vkDevice, VK_NULL_HANDLE, VK_NULL_HANDLE,
-        1, &rtci, nullptr, &vkHandle);
+        1, &rtci, nullptr, &vkHandle));
 
     auto pImpl = new RaytracingPipeline::Impl(
         impl().vkDevice,
@@ -2737,7 +2737,7 @@ Buffer Device::createBuffer(const BufferCreateInfo& info)
         memInfo.first.pNext = &flagsInfo;
 
     VkDeviceMemory memory = allocate<VkDeviceMemory>(impl().vkDevice, memInfo.first);
-    !vkBindBufferMemory(impl().vkDevice, vkHandle, memory, 0);
+    ASSERT_SUCCESS(vkBindBufferMemory(impl().vkDevice, vkHandle, memory, 0));
 
     
     auto pImpl = new Buffer::Impl(
@@ -2763,13 +2763,13 @@ Buffer Device::createBuffer(const BufferCreateInfo& info)
 
 uint8_t* Buffer::map(uint64_t offset, uint64_t size)
 {
-    ASSERT_(*this);
-    ASSERT_(!impl().mapped);                                         // VUID-vkMapMemory-memory-00678        
-    ASSERT_((uint32_t)impl().memProps & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);  // VUID-vkMapMemory-memory-00682
-    ASSERT_(offset < impl().size);                                   // VUID-vkMapMemory-offset-00679
-    ASSERT_(size == EVA_WHOLE_SIZE || offset + size <= impl().size);  // VUID-vkMapMemory-size-00681
+    EVA_ASSERT(*this);
+    EVA_ASSERT(!impl().mapped);                                         // VUID-vkMapMemory-memory-00678        
+    EVA_ASSERT((uint32_t)impl().memProps & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);  // VUID-vkMapMemory-memory-00682
+    EVA_ASSERT(offset < impl().size);                                   // VUID-vkMapMemory-offset-00679
+    EVA_ASSERT(size == EVA_WHOLE_SIZE || offset + size <= impl().size);  // VUID-vkMapMemory-size-00681
 
-    !vkMapMemory(impl().vkDevice, impl().vkMemory, offset, size, 0, (void**)&impl().mapped);
+    ASSERT_SUCCESS(vkMapMemory(impl().vkDevice, impl().vkMemory, offset, size, 0, (void**)&impl().mapped));
     impl().mappedOffset = offset;
     impl().mappedSize = size == EVA_WHOLE_SIZE ? impl().size : size;
     return impl().mapped;
@@ -2777,11 +2777,11 @@ uint8_t* Buffer::map(uint64_t offset, uint64_t size)
 
 VkMappedMemoryRange Buffer::Impl::getRange(uint64_t offset, uint64_t size) const
 {
-    ASSERT_(mapped);                                                                    // VUID-VkMappedMemoryRange-memory-00684
+    EVA_ASSERT(mapped);                                                                    // VUID-VkMappedMemoryRange-memory-00684
     if (size == EVA_WHOLE_SIZE) 
-        ASSERT_(mappedOffset <= offset && offset <= mappedOffset + mappedSize);         // VUID-VkMappedMemoryRange-memory-00686
+        EVA_ASSERT(mappedOffset <= offset && offset <= mappedOffset + mappedSize);         // VUID-VkMappedMemoryRange-memory-00686
     else 
-        ASSERT_(mappedOffset <= offset && offset + size <= mappedOffset + mappedSize);  // VUID-VkMappedMemoryRange-memory-00685
+        EVA_ASSERT(mappedOffset <= offset && offset + size <= mappedOffset + mappedSize);  // VUID-VkMappedMemoryRange-memory-00685
 
     return {
         .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
@@ -2809,8 +2809,8 @@ void Buffer::invalidate(uint64_t offset, uint64_t size) const
 
 void Buffer::unmap()
 {
-    ASSERT_(impl().mapped); // VUID-vkUnmapMemory-memory-00689
-    ASSERT_((uint32_t)impl().memProps & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+    EVA_ASSERT(impl().mapped); // VUID-vkUnmapMemory-memory-00689
+    EVA_ASSERT((uint32_t)impl().memProps & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
 
     vkUnmapMemory(impl().vkDevice, impl().vkMemory);
     impl().mapped = nullptr;
@@ -2835,7 +2835,7 @@ MEMORY_PROPERTY Buffer::memoryProperties() const
 
 DeviceAddress Buffer::deviceAddress() const
 {
-    ASSERT_((uint32_t)impl().usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    EVA_ASSERT((uint32_t)impl().usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     return impl().deviceAddress;
 }
 
@@ -2871,7 +2871,7 @@ Image Device::createImage(const ImageCreateInfo& info)
         impl().vkPhysicalDevice, impl().vkDevice, vkHandle, (VkMemoryPropertyFlags)(uint32_t)info.reqMemProps);
 
     VkDeviceMemory memory = allocate<VkDeviceMemory>(impl().vkDevice, memInfo.first);
-    !vkBindImageMemory(impl().vkDevice, vkHandle, memory, 0);
+    ASSERT_SUCCESS(vkBindImageMemory(impl().vkDevice, vkHandle, memory, 0));
 
     auto pImpl = new Image::Impl(
         impl().vkDevice, 
@@ -2899,7 +2899,7 @@ ImageView Image::view(ImageViewDesc&& desc) const
         if (impl().depth > 1)
         // if (impl().depth > 1)
         {
-            ASSERT_(impl().arrayLayers == 1); // VUID-VkImageCreateInfo-imageType-00961
+            EVA_ASSERT(impl().arrayLayers == 1); // VUID-VkImageCreateInfo-imageType-00961
             desc.viewType = IMAGE_VIEW_TYPE::_3D;
         }
         else
@@ -3154,7 +3154,7 @@ DescriptorSet DescriptorSet::write(
     uint32_t consumedDescriptors = 0;
     
     auto iter = bindingInfos.lower_bound(startBindingId);   // It avoids VUID-VkWriteDescriptorSet-dstBinding-00316
-    ASSERT_(startArrayOffset == 0 || 
+    EVA_ASSERT(startArrayOffset == 0 || 
         (iter->first == startBindingId && startArrayOffset < iter->second.descriptorCount)); // Undefined behavior, not even mentioned in the Vulkan spec.
 
     auto resourceTypeOf = [](VkDescriptorType t) {
@@ -3254,7 +3254,7 @@ DescriptorSet DescriptorSet::write(
         }
 
         else 
-            ASSERT_(false); 
+            EVA_ASSERT(false); 
 
         consumedDescriptors += consecutiveDescCount;
         startArrayOffset = 0;
@@ -3262,7 +3262,7 @@ DescriptorSet DescriptorSet::write(
         if (consumedDescriptors == descriptors.size()) // Normal exit condition
             break;
     }
-    ASSERT_(consumedDescriptors == descriptors.size()); // If given shader data has not been fully consumed, it is considered as an error.
+    EVA_ASSERT(consumedDescriptors == descriptors.size()); // If given shader data has not been fully consumed, it is considered as an error.
     
     vkUpdateDescriptorSets(impl().vkDevice, (uint32_t)writes.size(), writes.data(), 0, nullptr);
     return *this;
@@ -3270,7 +3270,7 @@ DescriptorSet DescriptorSet::write(
 
 DescriptorSet DescriptorSet::operator=(std::vector<DescriptorSet>&& data)
 {
-    ASSERT_(data.size() == 1);
+    EVA_ASSERT(data.size() == 1);
     *this = data[0];
     return *this;
 }
@@ -3353,7 +3353,7 @@ Window Runtime::createWindow(WindowCreateInfo info)
         throw std::runtime_error("Failed to create GLFW window.");
 
     VkSurfaceKHR vkSurface;
-    !glfwCreateWindowSurface(impl().instance, pWindow, nullptr, &vkSurface);
+    ASSERT_SUCCESS(glfwCreateWindowSurface(impl().instance, pWindow, nullptr, &vkSurface));
 
     /*
     * From here, we create a swapchain for the window.
@@ -3361,11 +3361,11 @@ Window Runtime::createWindow(WindowCreateInfo info)
     VkPhysicalDevice pd = info.device.impl().vkPhysicalDevice;
     
     VkSurfaceCapabilitiesKHR capabilities;
-    !vkGetPhysicalDeviceSurfaceCapabilitiesKHR(pd, vkSurface, &capabilities);
-    ASSERT_(capabilities.currentExtent.width == info.width      // in almost platforms
+    ASSERT_SUCCESS(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(pd, vkSurface, &capabilities));
+    EVA_ASSERT(capabilities.currentExtent.width == info.width      // in almost platforms
         || capabilities.currentExtent.width == UINT32_MAX);     // in Wayland, etc.
 
-    ASSERT_( 
+    EVA_ASSERT( 
         ([&]() { 
         for (auto& f : arrayFrom(vkGetPhysicalDeviceSurfaceFormatsKHR, pd, vkSurface)) 
             if (f.format == (uint32_t)info.swapChainImageFormat && f.colorSpace == (uint32_t)info.swapChainImageColorSpace) 
@@ -3378,7 +3378,7 @@ Window Runtime::createWindow(WindowCreateInfo info)
     vkGetPhysicalDeviceSurfaceFormatsKHR 은 통과하였으나
     해당 포맷이 OPTIMAL_TILING + usage 조합에 지원되지 않을 수도 있다.
     */
-    ASSERT_(
+    EVA_ASSERT(
         ([&]() { 
             VkFormatProperties formatProps;
             vkGetPhysicalDeviceFormatProperties(pd, (VkFormat)(uint32_t)info.swapChainImageFormat, &formatProps);
@@ -3487,13 +3487,13 @@ vkAcquireNextImageKHR must return in finite time with an allowed VkResult code.
 uint32_t Window::acquireNextImageIndex(Semaphore imageAvailableSemaphore) const
 {
     uint32_t imageIndex = 0;
-    !vkAcquireNextImageKHR(
+    ASSERT_SUCCESS(vkAcquireNextImageKHR(
         impl().vkDevice,
         impl().vkSwapchain,
         UINT64_MAX,         // no timeout for simplicity
         imageAvailableSemaphore.impl().vkSemaphore,
         VK_NULL_HANDLE,     // no fence for simplicity
-        &imageIndex);
+        &imageIndex));
 
     impl().availableSwapchainImageIndices.push_back(imageIndex);
     return imageIndex;
@@ -3518,7 +3518,7 @@ void Window::present(Queue queue, std::vector<Semaphore> waitSemaphores, uint32_
         .pSwapchains = &impl().vkSwapchain,
         .pImageIndices = &imageIndex
     };
-    !vkQueuePresentKHR(queue.impl().vkQueue, &presentInfo);
+    ASSERT_SUCCESS(vkQueuePresentKHR(queue.impl().vkQueue, &presentInfo));
 }
 
 void Window::present(Queue queue, std::vector<Semaphore> waitSemaphores, Image image) const
@@ -3631,10 +3631,10 @@ void Window::setScrollCallback(void (*callback)(double xoffset, double yoffset))
 /////////////////////////////////////////////////////////////////////////////////////////
 AccelerationStructure Device::createAccelerationStructure(const AsCreateInfo& info) 
 {
-    ASSERT_((uint32_t)info.internalBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR);  // VUID-VkAccelerationStructureCreateInfoKHR-buffer-03614
-    ASSERT_((uint32_t)info.internalBuffer.memoryProperties() & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);          // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03707
-    ASSERT_(info.internalBuffer.offset % asBufferOffsetAlignment() == 0);
-    ASSERT_(info.size != 0);
+    EVA_ASSERT((uint32_t)info.internalBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR);  // VUID-VkAccelerationStructureCreateInfoKHR-buffer-03614
+    EVA_ASSERT((uint32_t)info.internalBuffer.memoryProperties() & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);          // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03707
+    EVA_ASSERT(info.internalBuffer.offset % asBufferOffsetAlignment() == 0);
+    EVA_ASSERT(info.size != 0);
     
     VkAccelerationStructureKHR vkAccelStruct;
     {
@@ -3645,7 +3645,7 @@ AccelerationStructure Device::createAccelerationStructure(const AsCreateInfo& in
             .size = (VkDeviceSize) info.size,
             .type = (VkAccelerationStructureTypeKHR)(uint32_t)info.asType,
         };
-        !vkCreateAccelerationStructureKHR_(impl().vkDevice, &createInfo, nullptr, &vkAccelStruct);
+        ASSERT_SUCCESS(vkCreateAccelerationStructureKHR_(impl().vkDevice, &createInfo, nullptr, &vkAccelStruct));
     }
 
     auto pImpl = new AccelerationStructure::Impl(
@@ -3658,7 +3658,7 @@ AccelerationStructure Device::createAccelerationStructure(const AsCreateInfo& in
         .accelerationStructure = vkAccelStruct,
     };
 
-    ASSERT_((uint32_t)info.internalBuffer.usage() & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    EVA_ASSERT((uint32_t)info.internalBuffer.usage() & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     pImpl->deviceAddress = vkGetAccelerationStructureDeviceAddressKHR_(impl().vkDevice, &addressInfo);
 
     return *impl().accelerationStructures.insert(new AccelerationStructure::Impl*(pImpl)).first;
@@ -3666,7 +3666,7 @@ AccelerationStructure Device::createAccelerationStructure(const AsCreateInfo& in
 
 DeviceAddress AccelerationStructure::deviceAddress() const
 {
-    // ASSERT_(impl().usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    // EVA_ASSERT(impl().usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     return impl().deviceAddress;
 }
 
@@ -3706,7 +3706,7 @@ DeviceAddress AccelerationStructure::deviceAddress() const
 //         } 
 //         else 
 //         {
-//             ASSERT_(asInfo.geometries.size() == 1);
+//             EVA_ASSERT(asInfo.geometries.size() == 1);
 //             asType = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
 //             base.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
 //             base.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
@@ -3751,7 +3751,7 @@ AsBuildSizesInfo Device::getBuildSizesInfo(const AsBuildInfo& info) const
     else if (info.geometryType == GEOMETRY_TYPE::INSTANCES)
         base.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
     else 
-        ASSERT_(false);
+        EVA_ASSERT(false);
 
     std::vector<VkAccelerationStructureGeometryKHR> geometries(info.primitiveCounts.size(), base);
 
@@ -3783,13 +3783,13 @@ AsBuildSizesInfo Device::getBuildSizesInfo(const AsBuildInfo& info) const
 
 // CommandBuffer CommandBuffer::buildAccelerationStructures(const AsBuildInfoTriangles& info)
 // {
-//     ASSERT_(info.scratchBuffer.deviceAddress() % impl().device.minAccelerationStructureScratchOffsetAlignment() == 0);  // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03710
-//     ASSERT_(info.scratchBuffer.memoryProperties() & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);    // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03707
-//     ASSERT_(info.scratchBuffer.usage() & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);                // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03674
+//     EVA_ASSERT(info.scratchBuffer.deviceAddress() % impl().device.minAccelerationStructureScratchOffsetAlignment() == 0);  // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03710
+//     EVA_ASSERT(info.scratchBuffer.memoryProperties() & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);    // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03707
+//     EVA_ASSERT(info.scratchBuffer.usage() & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);                // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03674
 
 //     // Either all geometries use the common buffer, or each geometry has its own buffer.
 //     bool useCommonBuffer = info.common.vertexInput.buffer;
-//     ASSERT_(
+//     EVA_ASSERT(
 //         (useCommonBuffer && !info.geometries[0].vertexInput.buffer) ||
 //         (!useCommonBuffer && info.geometries[0].vertexInput.buffer)
 //     );
@@ -3813,9 +3813,9 @@ AsBuildSizesInfo Device::getBuildSizesInfo(const AsBuildInfo& info) const
 //         auto& dst = geometries[i].geometry.triangles;
         
 //         auto& [vtxBuffer, vtxStride] = useCommonBuffer ? info.common.vertexInput : srcGeometry.vertexInput;
-//         ASSERT_(vtxBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
-//         ASSERT_(vtxBuffer.deviceAddress() % 4 == 0);   // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03711
-//         ASSERT_(vtxStride % 4 == 0);                   // VUID-VkAccelerationStructureGeometryTrianglesDataKHR-vertexStride-03735
+//         EVA_ASSERT(vtxBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
+//         EVA_ASSERT(vtxBuffer.deviceAddress() % 4 == 0);   // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03711
+//         EVA_ASSERT(vtxStride % 4 == 0);                   // VUID-VkAccelerationStructureGeometryTrianglesDataKHR-vertexStride-03735
 //         dst.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
 //         dst.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;              // This format is the only one supported
 //         dst.vertexData.deviceAddress = vtxBuffer.deviceAddress();
@@ -3846,9 +3846,9 @@ AsBuildSizesInfo Device::getBuildSizesInfo(const AsBuildInfo& info) const
 //         */
 //         if (idxBuffer)
 //         {
-//             ASSERT_(idxBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
-//             ASSERT_(idxStride == 2 || idxStride == 4);
-//             ASSERT_((idxStride == 2 && idxBuffer.deviceAddress() % 2 == 0) ||
+//             EVA_ASSERT(idxBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
+//             EVA_ASSERT(idxStride == 2 || idxStride == 4);
+//             EVA_ASSERT((idxStride == 2 && idxBuffer.deviceAddress() % 2 == 0) ||
 //                 (idxStride == 4 && idxBuffer.deviceAddress() % 4 == 0) );  // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03712
 //             dst.indexType = idxStride == 2 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
 //             dst.indexData.deviceAddress = idxBuffer.deviceAddress();
@@ -3864,17 +3864,17 @@ AsBuildSizesInfo Device::getBuildSizesInfo(const AsBuildInfo& info) const
 //             /*
 //             primitiveOffset is 0 because the role of the offset is included in firstVertex. 
 //             */
-//             ASSERT_(srcGeometry.vertexCount == srcGeometry.triangleCount * 3); 
+//             EVA_ASSERT(srcGeometry.vertexCount == srcGeometry.triangleCount * 3); 
 //             rangeInfo[i].primitiveOffset = 0;
 //         }
         
 //         if (srcGeometry.transformBuffer)
 //         {
-//             ASSERT_(srcGeometry.transformBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
+//             EVA_ASSERT(srcGeometry.transformBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
 //             dst.transformData.deviceAddress = srcGeometry.transformBuffer.deviceAddress();
 //             rangeInfo[i].transformOffset = 0;
-//             ASSERT_(dst.transformData.deviceAddress % 16 == 0); // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03810
-//             ASSERT_(rangeInfo[i].transformOffset % 16 == 0);    // VUID-VkAccelerationStructureBuildRangeInfoKHR-transformOffset-03658
+//             EVA_ASSERT(dst.transformData.deviceAddress % 16 == 0); // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03810
+//             EVA_ASSERT(rangeInfo[i].transformOffset % 16 == 0);    // VUID-VkAccelerationStructureBuildRangeInfoKHR-transformOffset-03658
 //         }
 //     }
 
@@ -3903,13 +3903,13 @@ AsBuildSizesInfo Device::getBuildSizesInfo(const AsBuildInfo& info) const
 
 // CommandBuffer CommandBuffer::buildAccelerationStructures(const AsBuildInfoAabbs& info)
 // {
-//     ASSERT_(info.scratchBuffer.deviceAddress() % impl().device.minAccelerationStructureScratchOffsetAlignment() == 0); // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03710
-//     ASSERT_(info.scratchBuffer.memoryProperties() & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);           // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03707
-//     ASSERT_(info.scratchBuffer.usage() & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);                       // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03674
+//     EVA_ASSERT(info.scratchBuffer.deviceAddress() % impl().device.minAccelerationStructureScratchOffsetAlignment() == 0); // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03710
+//     EVA_ASSERT(info.scratchBuffer.memoryProperties() & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);           // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03707
+//     EVA_ASSERT(info.scratchBuffer.usage() & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);                       // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03674
 
 //     // Either all geometries use the common AABB buffer, or each geometry has its own AABB buffer.
 //     bool useCommonAabbBuffer = info.common.aabbInput.buffer;
-//     ASSERT_(
+//     EVA_ASSERT(
 //         (useCommonAabbBuffer && !info.geometries[0].aabbInput.buffer) ||
 //         (!useCommonAabbBuffer && info.geometries[0].aabbInput.buffer)
 //     ); 
@@ -3931,9 +3931,9 @@ AsBuildSizesInfo Device::getBuildSizesInfo(const AsBuildInfo& info) const
 
 //         auto& dst = geometries[i].geometry.aabbs;
 //         auto& src = useCommonAabbBuffer ? info.common.aabbInput : srcGeometry.aabbInput;
-//         ASSERT_(src.buffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
-//         ASSERT_(src.buffer.deviceAddress() % 8 == 0);   // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03714
-//         ASSERT_(src.stride % 8 == 0);                   // VUID-VkAccelerationStructureGeometryAabbsDataKHR-stride-03545
+//         EVA_ASSERT(src.buffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
+//         EVA_ASSERT(src.buffer.deviceAddress() % 8 == 0);   // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03714
+//         EVA_ASSERT(src.stride % 8 == 0);                   // VUID-VkAccelerationStructureGeometryAabbsDataKHR-stride-03545
 
 //         dst.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_AABBS_DATA_KHR;
 //         dst.data.deviceAddress = src.buffer.deviceAddress();
@@ -3979,7 +3979,7 @@ AsBuildSizesInfo Device::getBuildSizesInfo(const AsBuildInfo& info) const
 //         .scratchData = {.deviceAddress = info.scratchBuffer.deviceAddress()},
 //     };
 
-//     ASSERT_(info.geometries.size() == 1); 
+//     EVA_ASSERT(info.geometries.size() == 1); 
 //     std::vector<VkAccelerationStructureGeometryKHR> geometries(1, {
 //         .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
 //         .geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR,
@@ -3995,8 +3995,8 @@ AsBuildSizesInfo Device::getBuildSizesInfo(const AsBuildInfo& info) const
 //     auto& dst = geometries[0].geometry.instances;
 //     auto& src = info.geometries[0].instanceInput;
 
-//     ASSERT_((uint32_t)src.buffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
-//     ASSERT_(src.buffer.deviceAddress() % 8 == 0);   // VUID
+//     EVA_ASSERT((uint32_t)src.buffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
+//     EVA_ASSERT(src.buffer.deviceAddress() % 8 == 0);   // VUID
 //     dst.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
 //     dst.arrayOfPointers = VK_FALSE;
 //     dst.data.deviceAddress = src.buffer.deviceAddress();
@@ -4077,9 +4077,9 @@ CommandBuffer CommandBuffer::buildAccelerationStructures(const AsBuildInfo& info
 
 //                     auto& dstTriangles = dstGeometry.geometry.triangles;
 //                     auto& [vtxBuffer, vtxStride] = useCommonBuffer ? srcInfo.common.vertexInput : srcInfo.geometries[j].vertexInput;
-//                     ASSERT_(vtxBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
-//                     ASSERT_(vtxBuffer.deviceAddress() % 4 == 0);   // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03711
-//                     ASSERT_(vtxStride % 4 == 0);                   // VUID-VkAccelerationStructureGeometryTrianglesDataKHR-vertexStride-03735
+//                     EVA_ASSERT(vtxBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
+//                     EVA_ASSERT(vtxBuffer.deviceAddress() % 4 == 0);   // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03711
+//                     EVA_ASSERT(vtxStride % 4 == 0);                   // VUID-VkAccelerationStructureGeometryTrianglesDataKHR-vertexStride-03735
 //                     dstTriangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
 //                     dstTriangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;              // This format is the only one supported
 //                     dstTriangles.vertexData.deviceAddress = vtxBuffer.deviceAddress();
@@ -4110,9 +4110,9 @@ CommandBuffer CommandBuffer::buildAccelerationStructures(const AsBuildInfo& info
 //                     auto& [idxBuffer, idxStride] = useCommonBuffer ? srcInfo.common.indexInput : srcInfo.geometries[j].indexInput;
 //                     if (idxBuffer)
 //                     {
-//                         ASSERT_(idxBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
-//                         ASSERT_(idxStride == 2 || idxStride == 4);
-//                         ASSERT_((idxStride == 2 && idxBuffer.deviceAddress() % 2 == 0) ||
+//                         EVA_ASSERT(idxBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
+//                         EVA_ASSERT(idxStride == 2 || idxStride == 4);
+//                         EVA_ASSERT((idxStride == 2 && idxBuffer.deviceAddress() % 2 == 0) ||
 //                             (idxStride == 4 && idxBuffer.deviceAddress() % 4 == 0) );  // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03712
 //                         dstTriangles.indexType = idxStride == 2 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
 //                         dstTriangles.indexData.deviceAddress = idxBuffer.deviceAddress();
@@ -4128,17 +4128,17 @@ CommandBuffer CommandBuffer::buildAccelerationStructures(const AsBuildInfo& info
 //                         /*
 //                         primitiveOffset is 0 because the role of the offset is included in firstVertex. 
 //                         */
-//                         ASSERT_(srcGeometry.vertexCount == srcGeometry.triangleCount * 3); 
+//                         EVA_ASSERT(srcGeometry.vertexCount == srcGeometry.triangleCount * 3); 
 //                         rangeInfo.primitiveOffset = 0;
 //                     }
 
 //                     if (srcGeometry.transformBuffer)
 //                     {
-//                         ASSERT_(srcGeometry.transformBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
+//                         EVA_ASSERT(srcGeometry.transformBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
 //                         dstTriangles.transformData.deviceAddress = srcGeometry.transformBuffer.deviceAddress();
 //                         rangeInfo.transformOffset = 0;
-//                         ASSERT_(dstTriangles.transformData.deviceAddress % 16 == 0); // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03810
-//                         ASSERT_(rangeInfo.transformOffset % 16 == 0);    // VUID-VkAccelerationStructureBuildRangeInfoKHR-transformOffset-03658
+//                         EVA_ASSERT(dstTriangles.transformData.deviceAddress % 16 == 0); // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03810
+//                         EVA_ASSERT(rangeInfo.transformOffset % 16 == 0);    // VUID-VkAccelerationStructureBuildRangeInfoKHR-transformOffset-03658
 //                     }
 //                 } 
 //                 else if constexpr (std::is_same_v<T, AsBuildInfoAabbs>) 
@@ -4148,9 +4148,9 @@ CommandBuffer CommandBuffer::buildAccelerationStructures(const AsBuildInfo& info
 
 //                     auto& dstAabbs = dstGeometry.geometry.aabbs;
 //                     auto& srcAabbs = useCommonBuffer ? srcInfo.common.aabbInput : srcInfo.geometries[j].aabbInput;
-//                     ASSERT_(srcAabbs.buffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
-//                     ASSERT_(srcAabbs.buffer.deviceAddress() % 8 == 0);   // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03714
-//                     ASSERT_(srcAabbs.stride % 8 == 0);                   // VUID-VkAccelerationStructureGeometryAabbsDataKHR-stride-03545
+//                     EVA_ASSERT(srcAabbs.buffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
+//                     EVA_ASSERT(srcAabbs.buffer.deviceAddress() % 8 == 0);   // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03714
+//                     EVA_ASSERT(srcAabbs.stride % 8 == 0);                   // VUID-VkAccelerationStructureGeometryAabbsDataKHR-stride-03545
 
 //                     dstAabbs.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_AABBS_DATA_KHR;
 //                     dstAabbs.data.deviceAddress = srcAabbs.buffer.deviceAddress();
@@ -4161,7 +4161,7 @@ CommandBuffer CommandBuffer::buildAccelerationStructures(const AsBuildInfo& info
 //                         accAabbCount += srcGeometry.aabbCount;
 //                     }
 //                 } 
-//                 else ASSERT_(false);
+//                 else EVA_ASSERT(false);
 //             }
 
 //         }, infos[i]);
@@ -4199,8 +4199,8 @@ CommandBuffer CommandBuffer::buildAccelerationStructures(const std::vector<AsBui
         auto& rangeInfos = rangeInfosArray[i];
 
         size_t geometryCount = srcInfo.primitiveCounts.size();
-        ASSERT_(geometryCount > 0);
-        ASSERT_(geometryCount == 1 || srcInfo.geometryType != GEOMETRY_TYPE::INSTANCES);
+        EVA_ASSERT(geometryCount > 0);
+        EVA_ASSERT(geometryCount == 1 || srcInfo.geometryType != GEOMETRY_TYPE::INSTANCES);
 
         dstGeometries.resize(geometryCount, {
             .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
@@ -4227,12 +4227,12 @@ CommandBuffer CommandBuffer::buildAccelerationStructures(const std::vector<AsBui
             if constexpr (std::is_same_v<T, AsBuildInfo::Triangles>) 
             {
                 useCommonInput = (bool) inputs.vertexInput.buffer;
-                ASSERT_(inputs.eachGeometry.empty() || inputs.eachGeometry.size() == geometryCount);
+                EVA_ASSERT(inputs.eachGeometry.empty() || inputs.eachGeometry.size() == geometryCount);
             }
             else if constexpr (std::is_same_v<T, AsBuildInfo::Aabbs>) 
             {
                 useCommonInput = (bool) inputs.aabbInput.buffer;
-                ASSERT_(inputs.eachGeometry.empty() || inputs.eachGeometry.size() == geometryCount);
+                EVA_ASSERT(inputs.eachGeometry.empty() || inputs.eachGeometry.size() == geometryCount);
             }
 
             uint32_t accVtxCount = 0;
@@ -4252,9 +4252,9 @@ CommandBuffer CommandBuffer::buildAccelerationStructures(const std::vector<AsBui
 
                     auto& dstTriangles = dstGeometries[j].geometry.triangles;
                     auto& [vtxBuffer, vtxStride] = useCommonInput ? inputs.vertexInput : inputs.eachGeometry[j].vertexInput;
-                    ASSERT_((uint32_t)vtxBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
-                    ASSERT_(vtxBuffer.deviceAddress() % 4 == 0);   // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03711
-                    ASSERT_(vtxStride % 4 == 0);                   // VUID-VkAccelerationStructureGeometryTrianglesDataKHR-vertexStride-03735
+                    EVA_ASSERT((uint32_t)vtxBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
+                    EVA_ASSERT(vtxBuffer.deviceAddress() % 4 == 0);   // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03711
+                    EVA_ASSERT(vtxStride % 4 == 0);                   // VUID-VkAccelerationStructureGeometryTrianglesDataKHR-vertexStride-03735
                     
                     dstTriangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
                     dstTriangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;              // This format is the only one supported
@@ -4286,9 +4286,9 @@ CommandBuffer CommandBuffer::buildAccelerationStructures(const std::vector<AsBui
                     auto& [idxBuffer, idxStride] = useCommonInput ? inputs.indexInput : inputs.eachGeometry[j].indexInput;
                     if (idxBuffer)
                     {
-                        ASSERT_((uint32_t)idxBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
-                        ASSERT_(idxStride == 2 || idxStride == 4);
-                        ASSERT_((idxStride == 2 && idxBuffer.deviceAddress() % 2 == 0) ||
+                        EVA_ASSERT((uint32_t)idxBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
+                        EVA_ASSERT(idxStride == 2 || idxStride == 4);
+                        EVA_ASSERT((idxStride == 2 && idxBuffer.deviceAddress() % 2 == 0) ||
                             (idxStride == 4 && idxBuffer.deviceAddress() % 4 == 0) );  // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03712
                         dstTriangles.indexType = idxStride == 2 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
                         dstTriangles.indexData.deviceAddress = idxBuffer.deviceAddress();
@@ -4301,17 +4301,17 @@ CommandBuffer CommandBuffer::buildAccelerationStructures(const std::vector<AsBui
                     else
                     {
                         dstTriangles.indexType = VK_INDEX_TYPE_NONE_KHR;             // VUID-VkAccelerationStructureGeometryTrianglesDataKHR-indexType-03798
-                        ASSERT_(inputs.vertexCounts[j] == srcInfo.primitiveCounts[j] * 3); 
+                        EVA_ASSERT(inputs.vertexCounts[j] == srcInfo.primitiveCounts[j] * 3); 
                         rangeInfo.primitiveOffset = 0;                              // primitiveOffset is 0 because the role of the offset is included in firstVertex.
                     }
 
                     if (!inputs.eachGeometry.empty() && inputs.eachGeometry[j].transformBuffer)
                     {
-                        ASSERT_((uint32_t)inputs.eachGeometry[j].transformBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
+                        EVA_ASSERT((uint32_t)inputs.eachGeometry[j].transformBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
                         dstTriangles.transformData.deviceAddress = inputs.eachGeometry[j].transformBuffer.deviceAddress();
                         rangeInfo.transformOffset = 0;
-                        ASSERT_(dstTriangles.transformData.deviceAddress % 16 == 0); // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03810
-                        ASSERT_(rangeInfo.transformOffset % 16 == 0);    // VUID-VkAccelerationStructureBuildRangeInfoKHR-transformOffset-03658
+                        EVA_ASSERT(dstTriangles.transformData.deviceAddress % 16 == 0); // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03810
+                        EVA_ASSERT(rangeInfo.transformOffset % 16 == 0);    // VUID-VkAccelerationStructureBuildRangeInfoKHR-transformOffset-03658
                     }
                 } 
                 else if constexpr (std::is_same_v<T, AsBuildInfo::Aabbs>) 
@@ -4320,9 +4320,9 @@ CommandBuffer CommandBuffer::buildAccelerationStructures(const std::vector<AsBui
 
                     auto& dstAabbs = dstGeometries[j].geometry.aabbs;
                     auto& srcAabbs = useCommonInput ? inputs.aabbInput : inputs.eachGeometry[j].aabbInput;
-                    ASSERT_((uint32_t)srcAabbs.buffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
-                    ASSERT_(srcAabbs.buffer.deviceAddress() % 8 == 0);   // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03714
-                    ASSERT_(srcAabbs.stride % 8 == 0);                   // VUID-VkAccelerationStructureGeometryAabbsDataKHR-stride-03545
+                    EVA_ASSERT((uint32_t)srcAabbs.buffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
+                    EVA_ASSERT(srcAabbs.buffer.deviceAddress() % 8 == 0);   // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03714
+                    EVA_ASSERT(srcAabbs.stride % 8 == 0);                   // VUID-VkAccelerationStructureGeometryAabbsDataKHR-stride-03545
                     
                     dstAabbs.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_AABBS_DATA_KHR;
                     dstAabbs.data.deviceAddress = srcAabbs.buffer.deviceAddress();
@@ -4337,14 +4337,14 @@ CommandBuffer CommandBuffer::buildAccelerationStructures(const std::vector<AsBui
                 {
                     auto& dstInstances = dstGeometries[j].geometry.instances;
                     auto& srcInstances = inputs.instanceInput;
-                    ASSERT_((uint32_t)srcInstances.buffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
-                    ASSERT_(srcInstances.buffer.deviceAddress() % 16 == 0);   // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03715
+                    EVA_ASSERT((uint32_t)srcInstances.buffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR); // VUID-vkCmdBuildAccelerationStructuresKHR-geometry-03673
+                    EVA_ASSERT(srcInstances.buffer.deviceAddress() % 16 == 0);   // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03715
                     
                     dstInstances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
                     dstInstances.arrayOfPointers = VK_FALSE;
                     dstInstances.data.deviceAddress = srcInstances.buffer.deviceAddress();
                 } 
-                else ASSERT_(false);
+                else EVA_ASSERT(false);
             }
             
         }, srcInfo.inputs);
