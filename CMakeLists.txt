@@ -12,6 +12,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/bin)
 
 # Build options
 option(EVA_BUILD_SAMPLES "Build EVA sample projects" OFF)
+option(EVA_INCLUDE_RAYTRACING "Include raytracing support" OFF)
 
 # Find Vulkan
 find_package(Vulkan REQUIRED)
@@ -88,10 +89,15 @@ PRIVATE
 
 # Android
 if(ANDROID)
-    target_link_libraries(eva 
+    target_link_libraries(eva
     PRIVATE
         android
     )
+endif()
+
+# Raytracing support
+if(EVA_INCLUDE_RAYTRACING)
+    target_compile_definitions(eva PUBLIC EVA_INCLUDE_RAYTRACING)
 endif()
 
 
@@ -221,7 +227,7 @@ endfunction()
 ################################################################################
 # Samples
 ################################################################################
-if(EVA_BUILD_SAMPLES)
+if(EVA_BUILD_SAMPLES AND EVA_INCLUDE_RAYTRACING)
     message(STATUS "[EVA] Building sample projects...")
     add_subdirectory(samples/raytracing)
     message(STATUS "[EVA] Sample projects build configuration completed.")

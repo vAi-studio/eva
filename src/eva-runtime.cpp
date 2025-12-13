@@ -38,14 +38,16 @@ eva::SpvBlob eva::SpvBlob::readFrom(const char* filepath)
 
 
 PFN_vkGetBufferDeviceAddressKHR vkGetBufferDeviceAddressKHR_ = nullptr;
-PFN_vkCreateAccelerationStructureKHR vkCreateAccelerationStructureKHR_ = nullptr;
-PFN_vkDestroyAccelerationStructureKHR vkDestroyAccelerationStructureKHR_ = nullptr;
-PFN_vkGetAccelerationStructureBuildSizesKHR vkGetAccelerationStructureBuildSizesKHR_ = nullptr;
-PFN_vkGetAccelerationStructureDeviceAddressKHR vkGetAccelerationStructureDeviceAddressKHR_ = nullptr;
-PFN_vkCmdBuildAccelerationStructuresKHR vkCmdBuildAccelerationStructuresKHR_ = nullptr;
-PFN_vkCreateRayTracingPipelinesKHR vkCreateRayTracingPipelinesKHR_ = nullptr;
-PFN_vkGetRayTracingShaderGroupHandlesKHR vkGetRayTracingShaderGroupHandlesKHR_ = nullptr;
-PFN_vkCmdTraceRaysKHR vkCmdTraceRaysKHR_ = nullptr;
+#ifdef EVA_INCLUDE_RAYTRACING
+    PFN_vkCreateAccelerationStructureKHR vkCreateAccelerationStructureKHR_ = nullptr;
+    PFN_vkDestroyAccelerationStructureKHR vkDestroyAccelerationStructureKHR_ = nullptr;
+    PFN_vkGetAccelerationStructureBuildSizesKHR vkGetAccelerationStructureBuildSizesKHR_ = nullptr;
+    PFN_vkGetAccelerationStructureDeviceAddressKHR vkGetAccelerationStructureDeviceAddressKHR_ = nullptr;
+    PFN_vkCmdBuildAccelerationStructuresKHR vkCmdBuildAccelerationStructuresKHR_ = nullptr;
+    PFN_vkCreateRayTracingPipelinesKHR vkCreateRayTracingPipelinesKHR_ = nullptr;
+    PFN_vkGetRayTracingShaderGroupHandlesKHR vkGetRayTracingShaderGroupHandlesKHR_ = nullptr;
+    PFN_vkCmdTraceRaysKHR vkCmdTraceRaysKHR_ = nullptr;
+#endif
 
 
 
@@ -222,29 +224,33 @@ struct Device::Impl {
     // const VkInstance vkInstance;
     const Runtime& parent;
     const DeviceSettings settings;
-    
-    struct {
-        const uint32_t shaderGroupHandleSize = portable::shaderGroupHandleSize;
-        uint32_t shaderGroupHandleAlignment; 
-        uint32_t shaderGroupBaseAlignment; 
-        uint32_t minAccelerationStructureScratchOffsetAlignment;
-        const uint32_t asBufferOffsetAlignment = 256;
-    } rtProps;
-    
+
     std::set<CommandPool::Impl**> cmdPools;
     std::set<Fence::Impl**> fences;
     std::set<Semaphore::Impl**> semaphores;
     std::set<ShaderModule::Impl**> shaderModules;
     std::set<ComputePipeline::Impl**> computePipelines;
-    std::set<RaytracingPipeline::Impl**> raytracingPipelines;
-    std::set<Buffer::Impl**> buffers; 
+
+    std::set<Buffer::Impl**> buffers;
     std::set<Image::Impl**> images;
     std::set<Sampler::Impl**> samplers;
-    
+
     std::set<DescriptorSetLayout::Impl**> descSetLayouts;
     std::set<PipelineLayout::Impl**> pipelineLayouts;
     std::set<DescriptorPool::Impl**> descPools;
+
+#ifdef EVA_INCLUDE_RAYTRACING
+    struct {
+        const uint32_t shaderGroupHandleSize = portable::shaderGroupHandleSize;
+        uint32_t shaderGroupHandleAlignment;
+        uint32_t shaderGroupBaseAlignment;
+        uint32_t minAccelerationStructureScratchOffsetAlignment;
+        const uint32_t asBufferOffsetAlignment = 256;
+    } rtProps;
+
+    std::set<RaytracingPipeline::Impl**> raytracingPipelines;
     std::set<AccelerationStructure::Impl**> accelerationStructures;
+#endif
 
 
     CommandPool defaultCmdPool[queue_max][8] = {};
@@ -424,32 +430,6 @@ struct ComputePipeline::Impl {
     , vkPipeline(vkPipeline)
     , layout(layout)
     , workGroupSize{sizeX, sizeY, sizeZ} {}
-    ~Impl() {                           
-        vkDestroyPipeline(vkDevice, vkPipeline, nullptr); 
-    }
-};
-
-
-struct RaytracingPipeline::Impl {
-    const VkDevice vkDevice;
-    const VkPipeline vkPipeline;
-    const PipelineLayout layout;
-
-    std::vector<ShaderGroupHandle> hitGroupHandles;
-
-    struct Sbt {
-        Buffer buffer;
-        VkStridedDeviceAddressRegionKHR rgen{};
-        VkStridedDeviceAddressRegionKHR miss{};
-        VkStridedDeviceAddressRegionKHR hitGroup{};
-    } sbt;
-
-    Impl(VkDevice vkDevice,             
-        VkPipeline vkPipeline, 
-        PipelineLayout layout) 
-    : vkDevice(vkDevice)
-    , vkPipeline(vkPipeline)
-    , layout(layout) {}
     ~Impl() {                           
         vkDestroyPipeline(vkDevice, vkPipeline, nullptr); 
     }
@@ -666,6 +646,33 @@ DescriptorPool::Impl::~Impl()
 }
 
 
+#ifdef EVA_INCLUDE_RAYTRACING
+struct RaytracingPipeline::Impl {
+    const VkDevice vkDevice;
+    const VkPipeline vkPipeline;
+    const PipelineLayout layout;
+
+    std::vector<ShaderGroupHandle> hitGroupHandles;
+
+    struct Sbt {
+        Buffer buffer;
+        VkStridedDeviceAddressRegionKHR rgen{};
+        VkStridedDeviceAddressRegionKHR miss{};
+        VkStridedDeviceAddressRegionKHR hitGroup{};
+    } sbt;
+
+    Impl(VkDevice vkDevice,
+        VkPipeline vkPipeline,
+        PipelineLayout layout)
+    : vkDevice(vkDevice)
+    , vkPipeline(vkPipeline)
+    , layout(layout) {}
+    ~Impl() {
+        vkDestroyPipeline(vkDevice, vkPipeline, nullptr);
+    }
+};
+
+
 struct AccelerationStructure::Impl {
     VkDevice vkDevice;
     VkAccelerationStructureKHR vkAccelStruct;
@@ -681,6 +688,7 @@ struct AccelerationStructure::Impl {
         vkDestroyAccelerationStructureKHR_(vkDevice, vkAccelStruct, nullptr);
     }
 };
+#endif
 
 
 
@@ -843,7 +851,8 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         reqExtentions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
     }
 
-    if (settings.enableRaytracing) 
+#ifdef EVA_INCLUDE_RAYTRACING
+    if (settings.enableRaytracing)
     {
         reqExtentions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
         reqExtentions.push_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
@@ -853,6 +862,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         reqExtentions.push_back(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
         reqExtentions.push_back(VK_KHR_SPIRV_1_4_EXTENSION_NAME);
     }
+#endif
 
     if (!deviceSupportsExtensions(pd, reqExtentions))
     {
@@ -1020,7 +1030,8 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             //.shaderSharedFloat32AtomicAdd = VK_TRUE,
         });
 
-        if (settings.enableRaytracing) 
+#ifdef EVA_INCLUDE_RAYTRACING
+        if (settings.enableRaytracing)
         {
             chain.add(VkPhysicalDeviceBufferDeviceAddressFeatures{
                 .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
@@ -1035,6 +1046,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
                 .rayTracingPipeline = VK_TRUE,
             });
         }
+#endif
     }
 
     VkDeviceCreateInfo deviceCreateInfo{
@@ -1081,7 +1093,8 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         std::move(queues)
     );
 
-    if (settings.enableRaytracing) 
+#ifdef EVA_INCLUDE_RAYTRACING
+    if (settings.enableRaytracing)
     {
         vkGetBufferDeviceAddressKHR_ = (PFN_vkGetBufferDeviceAddressKHR)vkGetDeviceProcAddr(vkDevice, "vkGetBufferDeviceAddressKHR");
         vkCreateAccelerationStructureKHR_ = (PFN_vkCreateAccelerationStructureKHR)vkGetDeviceProcAddr(vkDevice, "vkCreateAccelerationStructureKHR");
@@ -1099,7 +1112,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         VkPhysicalDeviceAccelerationStructurePropertiesKHR accelStructProps{
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR,
             .pNext = &rayTracingPipelineProps,
-        }; 
+        };
         VkPhysicalDeviceProperties2 deviceProps2{
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
             .pNext = &accelStructProps,
@@ -1110,6 +1123,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         pImpl->rtProps.shaderGroupBaseAlignment = rayTracingPipelineProps.shaderGroupBaseAlignment;
         pImpl->rtProps.minAccelerationStructureScratchOffsetAlignment = accelStructProps.minAccelerationStructureScratchOffsetAlignment;
     }
+#endif
 
     return impl().devices.emplace_back(new Device::Impl*(pImpl));
 }
@@ -1551,22 +1565,24 @@ CommandBuffer CommandBuffer::bindPipeline(Pipeline pipeline)
     VkPipelineBindPoint bindPoint;
     VkPipeline vkPipeline;
 
-    std::visit([&](auto&& pipeline) 
+    std::visit([&](auto&& pipeline)
     {
         using T = std::decay_t<decltype(pipeline)>;
-        if constexpr (std::is_same_v<T, ComputePipeline>) 
+        if constexpr (std::is_same_v<T, ComputePipeline>)
         {
             EVA_ASSERT(type() <= queue_compute);  // VUID-vkCmdBindPipeline-pipelineBindPoint-00777
             bindPoint = VK_PIPELINE_BIND_POINT_COMPUTE;
             vkPipeline = pipeline.impl().vkPipeline;
         }
-        else if constexpr (std::is_same_v<T, RaytracingPipeline>) 
+#ifdef EVA_INCLUDE_RAYTRACING
+        else if constexpr (std::is_same_v<T, RaytracingPipeline>)
         {
             bindPoint = VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR;
             vkPipeline = pipeline.impl().vkPipeline;
         }
-        else 
-            EVA_ASSERT(false); 
+#endif
+        else
+            EVA_ASSERT(false);
     }, pipeline);
     
     vkCmdBindPipeline(impl().vkCmdBuffer, bindPoint, vkPipeline);
@@ -1606,17 +1622,19 @@ CommandBuffer CommandBuffer::bindDescSets(
         bindPoint = VK_PIPELINE_BIND_POINT_COMPUTE;
         layout = std::get<ComputePipeline>(impl().boundPipeline).impl().layout.impl().vkPipeLayout;
     }
+#ifdef EVA_INCLUDE_RAYTRACING
     else if (index == 2) {
         bindPoint = VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR;
         layout = std::get<RaytracingPipeline>(impl().boundPipeline).impl().layout.impl().vkPipeLayout;
     }
+#endif
     else
         EVA_ASSERT(false);
 
     vkCmdBindDescriptorSets(
-        impl().vkCmdBuffer, bindPoint, 
-        layout, firstSet, 
-        (uint32_t)vkDescSets.size(), vkDescSets.data(), 
+        impl().vkCmdBuffer, bindPoint,
+        layout, firstSet,
+        (uint32_t)vkDescSets.size(), vkDescSets.data(),
         0, nullptr);
     return *this;
 }
@@ -1639,8 +1657,8 @@ CommandBuffer CommandBuffer::setPushConstants(
 }
 
 CommandBuffer CommandBuffer::setPushConstants(
-    uint32_t offset, 
-    uint32_t size, 
+    uint32_t offset,
+    uint32_t size,
     const void* data)
 {
     auto index = impl().boundPipeline.index();
@@ -1648,9 +1666,11 @@ CommandBuffer CommandBuffer::setPushConstants(
     if (index == 0) {
         layout = std::get<ComputePipeline>(impl().boundPipeline).impl().layout;
     }
+#ifdef EVA_INCLUDE_RAYTRACING
     else if (index == 2) {
         layout = std::get<RaytracingPipeline>(impl().boundPipeline).impl().layout;
     }
+#endif
     else
         EVA_ASSERT(false);
 
@@ -2099,11 +2119,12 @@ CommandBuffer CommandBuffer::dispatch2(uint32_t numThreadsInX, uint32_t numThrea
 
 CommandBuffer CommandBuffer::dispatch(uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ)
 {
-    EVA_ASSERT(type() <= queue_compute);  // VUID-vkCmdDispatch-commandBuffer-cmdpool (Implicit)  
+    EVA_ASSERT(type() <= queue_compute);  // VUID-vkCmdDispatch-commandBuffer-cmdpool (Implicit)
     vkCmdDispatch(impl().vkCmdBuffer, groupCountX, groupCountY, groupCountZ);
     return *this;
 }
 
+#ifdef EVA_INCLUDE_RAYTRACING
 CommandBuffer CommandBuffer::traceRays(
     ShaderBindingTable hitGroupSbt, uint32_t width, uint32_t height, uint32_t depth)
 {
@@ -2127,7 +2148,7 @@ CommandBuffer CommandBuffer::traceRays(
         &callable,
         width, height, depth
     );
-  
+
     return *this;
 }
 
@@ -2147,9 +2168,10 @@ CommandBuffer CommandBuffer::traceRays(uint32_t width, uint32_t height, uint32_t
         &callable,
         width, height, depth
     );
-  
+
     return *this;
 }
+#endif
 
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -2458,6 +2480,7 @@ DescriptorSetLayout ComputePipeline::descSetLayout(uint32_t setId) const
 /////////////////////////////////////////////////////////////////////////////////////////
 // RaytracingPipeline
 /////////////////////////////////////////////////////////////////////////////////////////
+#ifdef EVA_INCLUDE_RAYTRACING
 uint32_t Device::shaderGroupHandleSize() const
 {
     return impl().rtProps.shaderGroupHandleSize;
@@ -2711,6 +2734,7 @@ DescriptorSetLayout RaytracingPipeline::descSetLayout(uint32_t setId) const
 {
     return impl().layout.descSetLayout(setId);
 }
+#endif // EVA_INCLUDE_RAYTRACING
 
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -3142,13 +3166,16 @@ DescriptorSet DescriptorSet::write(
     std::vector<VkWriteDescriptorSet> writes;
     std::vector<VkDescriptorBufferInfo> bufferInfos;
     std::vector<VkDescriptorImageInfo> imageInfos;
-    std::vector<VkWriteDescriptorSetAccelerationStructureKHR> asInfos;
-    std::vector<VkAccelerationStructureKHR> asArray;
     writes.reserve(descriptors.size());
     bufferInfos.reserve(descriptors.size());
     imageInfos.reserve(descriptors.size());
+
+#ifdef EVA_INCLUDE_RAYTRACING
+    std::vector<VkWriteDescriptorSetAccelerationStructureKHR> asInfos;
+    std::vector<VkAccelerationStructureKHR> asArray;
     asInfos.reserve(descriptors.size());
     asArray.reserve(descriptors.size());
+#endif
 
     auto& bindingInfos = impl().layout.impl().desc.bindings;
     uint32_t consumedDescriptors = 0;
@@ -3169,8 +3196,10 @@ DescriptorSet DescriptorSet::write(
         case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
         // case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
             return 1;  // image
+#ifdef EVA_INCLUDE_RAYTRACING
         case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
             return 2;  // acceleration structure
+#endif
         default: return -1;
         }
     };
@@ -3237,6 +3266,7 @@ DescriptorSet DescriptorSet::write(
             }
         }
         
+#ifdef EVA_INCLUDE_RAYTRACING
         else if (t == 2)
         {
             writes.back().pNext = &asInfos.emplace_back(
@@ -3245,15 +3275,16 @@ DescriptorSet DescriptorSet::write(
                 consecutiveDescCount,
                 asArray.data() + asArray.size()
             );
-            
-            for (uint32_t i = 0; i < consecutiveDescCount; ++i) 
+
+            for (uint32_t i = 0; i < consecutiveDescCount; ++i)
             {
                 auto& as = std::get<AccelerationStructure>(descriptors[consumedDescriptors + i]);
                 asArray.push_back(as.impl().vkAccelStruct);
             }
         }
+#endif
 
-        else 
+        else
             EVA_ASSERT(false); 
 
         consumedDescriptors += consecutiveDescCount;
@@ -3629,7 +3660,8 @@ void Window::setScrollCallback(void (*callback)(double xoffset, double yoffset))
 /////////////////////////////////////////////////////////////////////////////////////////
 // AccelerationStructure
 /////////////////////////////////////////////////////////////////////////////////////////
-AccelerationStructure Device::createAccelerationStructure(const AsCreateInfo& info) 
+#ifdef EVA_INCLUDE_RAYTRACING
+AccelerationStructure Device::createAccelerationStructure(const AsCreateInfo& info)
 {
     EVA_ASSERT((uint32_t)info.internalBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR);  // VUID-VkAccelerationStructureCreateInfoKHR-buffer-03614
     EVA_ASSERT((uint32_t)info.internalBuffer.memoryProperties() & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);          // VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03707
@@ -4363,6 +4395,7 @@ CommandBuffer CommandBuffer::buildAccelerationStructures(const std::vector<AsBui
 
     return *this;
 }
+#endif // EVA_INCLUDE_RAYTRACING
 
 
 
@@ -4381,7 +4414,6 @@ DESTROY_MACRO(Fence)
 DESTROY_MACRO(Semaphore)
 DESTROY_MACRO(ShaderModule)
 DESTROY_MACRO(ComputePipeline)
-DESTROY_MACRO(RaytracingPipeline)
 DESTROY_MACRO(Buffer)
 DESTROY_MACRO(Image)
 DESTROY_MACRO(Sampler)
@@ -4390,4 +4422,7 @@ DESTROY_MACRO(PipelineLayout)
 DESTROY_MACRO(DescriptorPool)
 DESTROY_MACRO(DescriptorSet)
 DESTROY_MACRO(Window)
-DESTROY_MACRO(AccelerationStructure)
+#ifdef EVA_INCLUDE_RAYTRACING
+    DESTROY_MACRO(RaytracingPipeline)
+    DESTROY_MACRO(AccelerationStructure)
+#endif

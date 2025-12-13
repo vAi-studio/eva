@@ -93,6 +93,7 @@ class AccelerationStructure;
     friend class Submitting;
 
 
+
 #define VULKAN_CLASS_COMMON \
     VULKAN_FRIENDS \
     struct Impl; Impl* pImpl; \
@@ -137,20 +138,7 @@ struct ImageMemoryBarrier;
 struct CopyRegion;
 
 struct WindowCreateInfo;
-struct AsBuildSizesInfo;
-struct AsCreateInfo;
-// struct AsSizeQueryInfo;
-// struct AsGeometryInfo;
-// struct AsBuildInfoTriangles;
-// struct AsBuildInfoAabbs;
-// struct AsBuildInfoInstances;
-// using AsBuildInfo22 = std::variant<
-//     AsBuildInfoTriangles,
-//     AsBuildInfoAabbs,
-//     AsBuildInfoInstances
-// >;
-struct AsBuildInfo;
-struct ShaderBindingTable;
+
 
 
 using BarrierInfo = std::variant<MemoryBarrier, BufferMemoryBarrier, ImageMemoryBarrier>;
@@ -165,7 +153,11 @@ using SubmissionBatchInfo = std::tuple<
 
 struct BufferDescriptor;
 struct ImageDescriptor;
-using Descriptor = std::variant<BufferDescriptor, ImageDescriptor, AccelerationStructure>;
+#ifdef EVA_INCLUDE_RAYTRACING
+    using Descriptor = std::variant<BufferDescriptor, ImageDescriptor, AccelerationStructure>;
+#else
+    using Descriptor = std::variant<BufferDescriptor, ImageDescriptor>;
+#endif
 
 
 
@@ -176,16 +168,21 @@ using Descriptor = std::variant<BufferDescriptor, ImageDescriptor, AccelerationS
 */
 namespace portable {
     constexpr uint32_t minMemoryMapAlignment = 64;      // min, vkMapMemory() minimum alignment
+#ifdef EVA_INCLUDE_RAYTRACING
     constexpr uint32_t shaderGroupHandleSize = 32;      // exact, Size of a shader group handle
     constexpr uint32_t shaderGroupBaseAlignment = 64;   // max, Alignment for SBT base addresses
     constexpr uint32_t shaderGroupHandleAlignment = 32; // max, Alignment for SBT record addresses
     constexpr uint32_t maxShaderGroupStride = 4096;     // min, Maximum SBT record size
+#endif
 }
 
-
-struct ShaderGroupHandle {
-    uint8_t data[portable::shaderGroupHandleSize];
-};
+#ifdef EVA_INCLUDE_RAYTRACING
+    struct AsBuildSizesInfo;
+    struct AsCreateInfo;
+    struct AsBuildInfo;
+    struct ShaderBindingTable;
+    struct ShaderGroupHandle;
+#endif
 
 
 
@@ -194,14 +191,19 @@ struct DeviceSettings {
     bool enableComputeQueues;
     bool enableTransferQueues;
     bool enablePresent;
+#ifdef EVA_INCLUDE_RAYTRACING
     bool enableRaytracing;
-    // bool operator==(const DeviceSettings&) const = default; 
+#endif
+    // bool operator==(const DeviceSettings&) const = default;
     bool operator<=(const DeviceSettings& other) const {
         return (!enableGraphicsQueues || other.enableGraphicsQueues) &&
                (!enableComputeQueues  || other.enableComputeQueues)  &&
                (!enableTransferQueues || other.enableTransferQueues) &&
-               (!enablePresent        || other.enablePresent)        &&
-               (!enableRaytracing     || other.enableRaytracing);
+               (!enablePresent        || other.enablePresent)
+#ifdef EVA_INCLUDE_RAYTRACING
+               && (!enableRaytracing  || other.enableRaytracing)
+#endif
+               ;
     }
 };
 
@@ -269,7 +271,7 @@ public:
 
     ShaderModule createShaderModule(const ShaderModuleCreateInfo& info);
     ComputePipeline createComputePipeline(const ComputePipelineCreateInfo& info);
-    RaytracingPipeline createRaytracingPipeline(const RaytracingPipelineCreateInfo& info);
+
     Buffer createBuffer(const BufferCreateInfo& info) ;
     Image createImage(const ImageCreateInfo& info);
     Sampler createSampler(const SamplerCreateInfo& info);
@@ -277,7 +279,9 @@ public:
     PipelineLayout createPipelineLayout(PipelineLayoutDesc desc);
     DescriptorPool createDescriptorPool(const DescriptorPoolCreateInfo& info);
 
-    // VkAccelerationStructureBuildSizesInfoKHR getBuildSizesInfo(const BlasAABB& blas) const;
+#ifdef EVA_INCLUDE_RAYTRACING
+    RaytracingPipeline createRaytracingPipeline(const RaytracingPipelineCreateInfo& info);
+
     uint32_t shaderGroupHandleSize() const;
     uint32_t shaderGroupHandleAlignment() const;
     uint32_t shaderGroupBaseAlignment() const;
@@ -285,7 +289,8 @@ public:
     uint32_t minAccelerationStructureScratchOffsetAlignment() const;
     AsBuildSizesInfo getBuildSizesInfo(const AsBuildInfo& info) const;
     AccelerationStructure createAccelerationStructure(const AsCreateInfo& info) ;
-    
+#endif
+
 };
 
 
@@ -437,21 +442,22 @@ public:
     );
 
     CommandBuffer dispatch2(
-        uint32_t numThreadsInX, 
-        uint32_t numThreadsInY=1, 
+        uint32_t numThreadsInX,
+        uint32_t numThreadsInY=1,
         uint32_t numThreadsInZ=1
     );
 
+#ifdef EVA_INCLUDE_RAYTRACING
     CommandBuffer traceRays(
         ShaderBindingTable hitGroupSbt,
-        uint32_t width, 
-        uint32_t height = 1, 
+        uint32_t width,
+        uint32_t height = 1,
         uint32_t depth = 1
     );
 
     CommandBuffer traceRays(
-        uint32_t width, 
-        uint32_t height = 1, 
+        uint32_t width,
+        uint32_t height = 1,
         uint32_t depth = 1
     );
 
@@ -462,6 +468,7 @@ public:
     CommandBuffer buildAccelerationStructures(
         const std::vector<AsBuildInfo>& infos
     );
+#endif
 };
 
 
@@ -508,15 +515,7 @@ public:
 };
 
 
-class RaytracingPipeline {
-    VULKAN_CLASS_COMMON2(RaytracingPipeline)
-public:
 
-    PipelineLayout layout() const;
-    DescriptorSetLayout descSetLayout(uint32_t setId0=0) const;
-    ShaderGroupHandle getHitGroupHandle(uint32_t groupIndex) const;
-    void setHitGroupSbt(ShaderBindingTable sbt);
-};
 
 
 class Buffer {
@@ -689,11 +688,6 @@ public:
 };
 
 
-class AccelerationStructure {
-    VULKAN_CLASS_COMMON2(AccelerationStructure)
-public:
-    DeviceAddress deviceAddress() const;
-};
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1041,24 +1035,6 @@ inline ShaderStage operator+(ShaderInput shader, ConstantID<ID, T> constant)
 struct ComputePipelineCreateInfo {
     ShaderStage csStage;
     std::optional<PipelineLayout> layout;
-};
-
-
-struct HitGroup {
-    ShaderStage chitStage;
-    ShaderStage ahitStage;
-    ShaderStage isecStage;
-};
-
-
-struct RaytracingPipelineCreateInfo {
-    ShaderStage rgenStage;
-    std::vector<ShaderStage> missStages;
-    std::vector<HitGroup> hitGroups;
-    uint32_t maxRecursionDepth = 1;
-    std::optional<PipelineLayout> layout;
-    // uint32_t rgenCustomDataSize;
-    // uint32_t missCustomDataSize;
 };
 
 
@@ -1670,6 +1646,46 @@ inline void operator<<(Submitting&& submitting, void(Waiting))
 
 
 
+#ifdef EVA_INCLUDE_RAYTRACING
+class RaytracingPipeline {
+    VULKAN_CLASS_COMMON2(RaytracingPipeline)
+public:
+
+    PipelineLayout layout() const;
+    DescriptorSetLayout descSetLayout(uint32_t setId0=0) const;
+    ShaderGroupHandle getHitGroupHandle(uint32_t groupIndex) const;
+    void setHitGroupSbt(ShaderBindingTable sbt);
+};
+
+
+class AccelerationStructure {
+    VULKAN_CLASS_COMMON2(AccelerationStructure)
+public:
+    DeviceAddress deviceAddress() const;
+};
+
+
+struct ShaderGroupHandle {
+    uint8_t data[portable::shaderGroupHandleSize];
+};
+
+
+struct HitGroup {
+    ShaderStage chitStage;
+    ShaderStage ahitStage;
+    ShaderStage isecStage;
+};
+
+
+struct RaytracingPipelineCreateInfo {
+    ShaderStage rgenStage;
+    std::vector<ShaderStage> missStages;
+    std::vector<HitGroup> hitGroups;
+    uint32_t maxRecursionDepth = 1;
+    std::optional<PipelineLayout> layout;
+};
+
+
 // directly match VkTransformMatrixKHR
 struct TransformMatrix {
     float    matrix[3][4];
@@ -1694,7 +1710,7 @@ struct ShaderBindingTable {
 };
 
 
-struct AABB 
+struct AABB
 {
     float minX, minY, minZ;
     float maxX, maxY, maxZ;
@@ -1715,76 +1731,10 @@ struct AsBuildSizesInfo {
 
 
 struct AsCreateInfo {
-    ACCELERATION_STRUCTURE_TYPE asType;  
+    ACCELERATION_STRUCTURE_TYPE asType;
     BufferRange internalBuffer;     // offset and size required for AS data storage
     uint64_t size;                  // Although it could be fed via internalBuffer.size, it is explicitly specified to prevent user mistakes
 };
-
-
-// struct AsBuildInfoTriangles {
-//     BUILD_ACCELERATION_STRUCTURE buildFlags;
-//     AccelerationStructure srcAs;
-//     AccelerationStructure dstAs;
-//     BufferRange scratchBuffer;      // offset required, size ignored
-
-//     struct Geometry {
-//         GEOMETRY flags;
-//         uint32_t triangleCount;
-//         uint32_t vertexCount;
-
-//         StridedBuffer vertexInput;
-//         StridedBuffer indexInput;  // stride must be 0, 2, or 4
-//         BufferRange transformBuffer;
-//     };
-//     std::vector<Geometry> geometries;
-
-//     struct {
-//         StridedBuffer vertexInput;
-//         StridedBuffer indexInput;
-//         // StridedBuffer transformInput;
-//     } common;
-// };
-
-
-// struct AsBuildInfoAabbs {
-//     VkBuildAccelerationStructureFlagsKHR buildFlags;
-//     AccelerationStructure srcAs;
-//     AccelerationStructure dstAs;
-//     BufferRange scratchBuffer;    
-
-//     struct Geometry {
-//         GEOMETRY flags;
-//         uint32_t aabbCount;
-//         StridedBuffer aabbInput;
-//     };
-//     std::vector<Geometry> geometries;
-
-//     struct {
-//         StridedBuffer aabbInput;
-//     } common;
-// };
-
-
-// struct AsBuildInfoInstances {
-//     VkBuildAccelerationStructureFlagsKHR buildFlags;
-//     AccelerationStructure srcAs;
-//     AccelerationStructure dstAs;
-//     BufferRange scratchBuffer;    
-
-//     // uint32_t instanceCount;
-//     // StridedBuffer instanceInput;
-
-//     struct Geometry {
-//         GEOMETRY flags;
-//         uint32_t instanceCount;
-//         StridedBuffer instanceInput;
-//     };
-
-//     std::vector<Geometry> geometries;
-//     struct {
-//         StridedBuffer instanceInput;
-//     } common;
-// };
 
 
 struct AsBuildInfo {
@@ -1793,7 +1743,7 @@ struct AsBuildInfo {
     std::vector<uint32_t> primitiveCounts; // primitive count for each geometry
     AccelerationStructure srcAs;
     AccelerationStructure dstAs;
-    BufferRange scratchBuffer;    
+    BufferRange scratchBuffer;
 
     struct Triangles {
         StridedBuffer vertexInput;
@@ -1826,6 +1776,10 @@ struct AsBuildInfo {
     using Inputs = std::variant<Triangles, Aabbs, Instances>;
     Inputs inputs;
 };
+#else
+class RaytracingPipeline {};
+class AccelerationStructure {};
+#endif // EVA_INCLUDE_RAYTRACING
 
 
 } // namespace eva
