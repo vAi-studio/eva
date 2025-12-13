@@ -1,6 +1,8 @@
 #include <vulkan/vulkan_core.h>
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
+#ifdef EVA_ENABLE_WINDOW
+    #define GLFW_INCLUDE_VULKAN
+    #include <GLFW/glfw3.h>
+#endif
 #include <array>
 #include <deque>
 #include <map>
@@ -13,6 +15,51 @@
 
 // #define USE_DEBUG_PRINTF 1
 
+
+#if defined(_WIN32) || defined(_WIN64)
+    #define EVA_PLATFORM_WINDOWS
+#elif defined(__ANDROID__)
+    #define EVA_PLATFORM_ANDROID
+#elif defined(__linux__)
+    #if defined(WAYLAND_DISPLAY) || defined(EVA_USE_WAYLAND)
+        #define EVA_PLATFORM_WAYLAND
+    #else
+        #define EVA_PLATFORM_XLIB
+    #endif
+#elif defined(__APPLE__)
+    #include <TargetConditionals.h>
+    #if TARGET_OS_IPHONE
+        #define EVA_PLATFORM_IOS
+    #else
+        #define EVA_PLATFORM_MACOS
+    #endif
+#endif
+
+std::vector<const char*> getRequiredInstanceExtensions()
+{
+#ifdef EVA_ENABLE_WINDOW
+    return { 
+        "VK_KHR_surface" 
+
+    #ifdef EVA_PLATFORM_WINDOWS
+        , "VK_KHR_win32_surface"
+    #elif defined(EVA_PLATFORM_ANDROID)
+        , "VK_KHR_android_surface"
+    #elif defined(EVA_PLATFORM_XLIB)
+        , "VK_KHR_xlib_surface"
+    #elif defined(EVA_PLATFORM_WAYLAND)
+        , "VK_KHR_wayland_surface"
+    #elif defined(EVA_PLATFORM_MACOS) || defined(EVA_PLATFORM_IOS)
+        , "VK_EXT_metal_surface"
+        , "VK_KHR_portability_enumeration"
+    #endif
+
+    };
+    
+#else
+    return {};
+#endif
+}
 
 
 void* createReflectShaderModule(const eva::SpvBlob& spvBlob);
@@ -38,7 +85,7 @@ eva::SpvBlob eva::SpvBlob::readFrom(const char* filepath)
 
 
 PFN_vkGetBufferDeviceAddressKHR vkGetBufferDeviceAddressKHR_ = nullptr;
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_RAYTRACING
     PFN_vkCreateAccelerationStructureKHR vkCreateAccelerationStructureKHR_ = nullptr;
     PFN_vkDestroyAccelerationStructureKHR vkDestroyAccelerationStructureKHR_ = nullptr;
     PFN_vkGetAccelerationStructureBuildSizesKHR vkGetAccelerationStructureBuildSizesKHR_ = nullptr;
@@ -75,10 +122,7 @@ static VkInstance createVkInstance()
     EVA_ASSERT(first);
     first = false;
 
-    uint32_t extensionCount = 0;
-    const char** extensionNames = glfwGetRequiredInstanceExtensions(&extensionCount);
-    std::vector<const char*> extensions(extensionNames, extensionNames + extensionCount);
-
+    std::vector<const char*> extensions = getRequiredInstanceExtensions();
     std::vector<const char*> requiredLayers;
 #ifndef NDEBUG
     requiredLayers.push_back("VK_LAYER_KHRONOS_validation");
@@ -209,8 +253,9 @@ static std::pair<VkMemoryAllocateInfo, VkMemoryPropertyFlags> getMemoryAllocInfo
 struct Runtime::Impl {
     const VkInstance instance;
     std::vector<Device> devices;
+#ifdef EVA_ENABLE_WINDOW
     std::vector<Window> windows;
-    // std::map<const GLFWwindow*, Window> windows; 
+#endif
     Impl(VkInstance instance) : instance(instance) {}
 };
 
@@ -239,7 +284,7 @@ struct Device::Impl {
     std::set<PipelineLayout::Impl**> pipelineLayouts;
     std::set<DescriptorPool::Impl**> descPools;
 
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_RAYTRACING
     struct {
         const uint32_t shaderGroupHandleSize = portable::shaderGroupHandleSize;
         uint32_t shaderGroupHandleAlignment;
@@ -646,7 +691,7 @@ DescriptorPool::Impl::~Impl()
 }
 
 
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_RAYTRACING
 struct RaytracingPipeline::Impl {
     const VkDevice vkDevice;
     const VkPipeline vkPipeline;
@@ -703,28 +748,34 @@ Runtime& Runtime::get()
 
 Runtime::Runtime()
 {
+#ifdef EVA_ENABLE_WINDOW
     glfwInit();
+#endif
     pImpl = new Impl(createVkInstance());
 }
 
 Runtime::~Runtime()
 {
-    for (auto& window : impl().windows) 
+#ifdef EVA_ENABLE_WINDOW
+    for (auto& window : impl().windows)
     {
         window.destroy();
         delete window.ppImpl;
     }
+#endif
 
-    for (auto& device : impl().devices) 
+    for (auto& device : impl().devices)
     {
         device.destroy();
         delete device.ppImpl;
     }
 
-    vkDestroyInstance(impl().instance, nullptr); 
+    vkDestroyInstance(impl().instance, nullptr);
     delete pImpl;
 
+#ifdef EVA_ENABLE_WINDOW
     // glfwTerminate();
+#endif
 }
 
 uint32_t Runtime::deviceCount() const
@@ -839,19 +890,21 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME
     };
 
-    if (settings.enablePresent) 
+#ifdef EVA_ENABLE_WINDOW
+    if (settings.enableWindow)
     {
         bool presentSupport = false;
-        for (uint32_t i = 0; i < qfProps.size(); ++i) 
+        for (uint32_t i = 0; i < qfProps.size(); ++i)
             presentSupport |= (bool) glfwGetPhysicalDevicePresentationSupport(impl().instance, pd, i);
 
-        if (!presentSupport) 
+        if (!presentSupport)
             throw std::runtime_error("The selected physical device does not support presentation.");
 
         reqExtentions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
     }
+#endif
 
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_RAYTRACING
     if (settings.enableRaytracing)
     {
         reqExtentions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
@@ -1030,7 +1083,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             //.shaderSharedFloat32AtomicAdd = VK_TRUE,
         });
 
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_RAYTRACING
         if (settings.enableRaytracing)
         {
             chain.add(VkPhysicalDeviceBufferDeviceAddressFeatures{
@@ -1093,7 +1146,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         std::move(queues)
     );
 
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_RAYTRACING
     if (settings.enableRaytracing)
     {
         vkGetBufferDeviceAddressKHR_ = (PFN_vkGetBufferDeviceAddressKHR)vkGetDeviceProcAddr(vkDevice, "vkGetBufferDeviceAddressKHR");
@@ -1161,7 +1214,6 @@ Device::Impl::~Impl()
 
     deleter(shaderModules);
     deleter(computePipelines);
-    deleter(raytracingPipelines);
     
     deleter(buffers);
     deleter(images);
@@ -1170,8 +1222,11 @@ Device::Impl::~Impl()
     deleter(descSetLayouts);
     deleter(pipelineLayouts);
     deleter(descPools);
-    
+
+#ifdef EVA_ENABLE_RAYTRACING
+    deleter(raytracingPipelines);
     deleter(accelerationStructures);
+#endif
 
     vkDestroyDevice(vkDevice, nullptr);
 }
@@ -1574,7 +1629,7 @@ CommandBuffer CommandBuffer::bindPipeline(Pipeline pipeline)
             bindPoint = VK_PIPELINE_BIND_POINT_COMPUTE;
             vkPipeline = pipeline.impl().vkPipeline;
         }
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_RAYTRACING
         else if constexpr (std::is_same_v<T, RaytracingPipeline>)
         {
             bindPoint = VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR;
@@ -1622,7 +1677,7 @@ CommandBuffer CommandBuffer::bindDescSets(
         bindPoint = VK_PIPELINE_BIND_POINT_COMPUTE;
         layout = std::get<ComputePipeline>(impl().boundPipeline).impl().layout.impl().vkPipeLayout;
     }
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_RAYTRACING
     else if (index == 2) {
         bindPoint = VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR;
         layout = std::get<RaytracingPipeline>(impl().boundPipeline).impl().layout.impl().vkPipeLayout;
@@ -1666,7 +1721,7 @@ CommandBuffer CommandBuffer::setPushConstants(
     if (index == 0) {
         layout = std::get<ComputePipeline>(impl().boundPipeline).impl().layout;
     }
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_RAYTRACING
     else if (index == 2) {
         layout = std::get<RaytracingPipeline>(impl().boundPipeline).impl().layout;
     }
@@ -2124,7 +2179,7 @@ CommandBuffer CommandBuffer::dispatch(uint32_t groupCountX, uint32_t groupCountY
     return *this;
 }
 
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_RAYTRACING
 CommandBuffer CommandBuffer::traceRays(
     ShaderBindingTable hitGroupSbt, uint32_t width, uint32_t height, uint32_t depth)
 {
@@ -2480,7 +2535,7 @@ DescriptorSetLayout ComputePipeline::descSetLayout(uint32_t setId) const
 /////////////////////////////////////////////////////////////////////////////////////////
 // RaytracingPipeline
 /////////////////////////////////////////////////////////////////////////////////////////
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_RAYTRACING
 uint32_t Device::shaderGroupHandleSize() const
 {
     return impl().rtProps.shaderGroupHandleSize;
@@ -2734,7 +2789,7 @@ DescriptorSetLayout RaytracingPipeline::descSetLayout(uint32_t setId) const
 {
     return impl().layout.descSetLayout(setId);
 }
-#endif // EVA_INCLUDE_RAYTRACING
+#endif // EVA_ENABLE_RAYTRACING
 
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -3170,7 +3225,7 @@ DescriptorSet DescriptorSet::write(
     bufferInfos.reserve(descriptors.size());
     imageInfos.reserve(descriptors.size());
 
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_RAYTRACING
     std::vector<VkWriteDescriptorSetAccelerationStructureKHR> asInfos;
     std::vector<VkAccelerationStructureKHR> asArray;
     asInfos.reserve(descriptors.size());
@@ -3196,7 +3251,7 @@ DescriptorSet DescriptorSet::write(
         case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
         // case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
             return 1;  // image
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_RAYTRACING
         case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
             return 2;  // acceleration structure
 #endif
@@ -3266,7 +3321,7 @@ DescriptorSet DescriptorSet::write(
             }
         }
         
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_RAYTRACING
         else if (t == 2)
         {
             writes.back().pNext = &asInfos.emplace_back(
@@ -3311,6 +3366,7 @@ DescriptorSet DescriptorSet::operator=(std::vector<DescriptorSet>&& data)
 /////////////////////////////////////////////////////////////////////////////////////////
 // Window
 /////////////////////////////////////////////////////////////////////////////////////////
+#ifdef EVA_ENABLE_WINDOW
 /*
 * TODO: separate Swapchain from Window
 * 지금대로라면, window가 파괴되기 전에 (swapchain을 소유한)device가 파괴되어서는 안된다.
@@ -3655,12 +3711,13 @@ void Window::setScrollCallback(void (*callback)(double xoffset, double yoffset))
     glfwSetWindowUserPointer((GLFWwindow*)impl().pWindow, const_cast<Window::Impl*>(&impl()));
     glfwSetScrollCallback((GLFWwindow*)impl().pWindow, glfwCallback);
 }
+#endif // EVA_ENABLE_WINDOW
 
 
 /////////////////////////////////////////////////////////////////////////////////////////
 // AccelerationStructure
 /////////////////////////////////////////////////////////////////////////////////////////
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_RAYTRACING
 AccelerationStructure Device::createAccelerationStructure(const AsCreateInfo& info)
 {
     EVA_ASSERT((uint32_t)info.internalBuffer.usage() & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR);  // VUID-VkAccelerationStructureCreateInfoKHR-buffer-03614
@@ -4395,7 +4452,7 @@ CommandBuffer CommandBuffer::buildAccelerationStructures(const std::vector<AsBui
 
     return *this;
 }
-#endif // EVA_INCLUDE_RAYTRACING
+#endif // EVA_ENABLE_RAYTRACING
 
 
 
@@ -4421,8 +4478,10 @@ DESTROY_MACRO(DescriptorSetLayout)
 DESTROY_MACRO(PipelineLayout)
 DESTROY_MACRO(DescriptorPool)
 DESTROY_MACRO(DescriptorSet)
-DESTROY_MACRO(Window)
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_WINDOW
+    DESTROY_MACRO(Window)
+#endif
+#ifdef EVA_ENABLE_RAYTRACING
     DESTROY_MACRO(RaytracingPipeline)
     DESTROY_MACRO(AccelerationStructure)
 #endif

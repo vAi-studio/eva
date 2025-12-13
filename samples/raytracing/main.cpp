@@ -12,7 +12,7 @@ using namespace eva;
 
 static Device device = Runtime::get().device({
     .enableGraphicsQueues = true,
-    .enablePresent = true,
+    .enableWindow = true,
     .enableRaytracing = true
 });
 
@@ -181,8 +181,8 @@ int main()
         .geometryType = GEOMETRY_TYPE::AABBS,
         .primitiveCounts = { 1 },
     };
-    ASSERT_(blasInfo0.primitiveCounts.size() == geometryCountInBlas0);
-    ASSERT_(blasInfo1.primitiveCounts.size() == geometryCountInBlas1);
+    EVA_ASSERT(blasInfo0.primitiveCounts.size() == geometryCountInBlas0);
+    EVA_ASSERT(blasInfo1.primitiveCounts.size() == geometryCountInBlas1);
 
     AsBuildInfo tlasInfo = {
         .buildFlags = BUILD_ACCELERATION_STRUCTURE::PREFER_FAST_TRACE,

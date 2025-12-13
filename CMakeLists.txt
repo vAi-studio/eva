@@ -12,7 +12,8 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/bin)
 
 # Build options
 option(EVA_BUILD_SAMPLES "Build EVA sample projects" OFF)
-option(EVA_INCLUDE_RAYTRACING "Include raytracing support" OFF)
+option(EVA_ENABLE_WINDOW "Enable window support" OFF)
+option(EVA_ENABLE_RAYTRACING "Enable raytracing support" OFF)
 
 # Find Vulkan
 find_package(Vulkan REQUIRED)
@@ -31,14 +32,16 @@ endif()
 ################################################################################
 # GLFW (check if already configured by parent)
 ################################################################################
-if(NOT TARGET glfw)
-    message(STATUS "[EVA] Configuring GLFW...")
-    set(GLFW_BUILD_DOCS OFF CACHE BOOL "Build GLFW documentation")
-    set(GLFW_INSTALL OFF CACHE BOOL "Generate installation target")
-    add_subdirectory(${EVA_EXTERNAL_DIR}/glfw EXCLUDE_FROM_ALL)
-    message(STATUS "[EVA] GLFW configuration completed.")
-else()
-    message(STATUS "[EVA] Using existing GLFW target")
+if(EVA_ENABLE_WINDOW)
+    if(NOT TARGET glfw)
+        message(STATUS "[EVA] Configuring GLFW...")
+        set(GLFW_BUILD_DOCS OFF CACHE BOOL "Build GLFW documentation")
+        set(GLFW_INSTALL OFF CACHE BOOL "Generate installation target")
+        add_subdirectory(${EVA_EXTERNAL_DIR}/glfw EXCLUDE_FROM_ALL)
+        message(STATUS "[EVA] GLFW configuration completed.")
+    else()
+        message(STATUS "[EVA] Using existing GLFW target")
+    endif()
 endif()
 
 
@@ -83,21 +86,23 @@ PUBLIC
 target_link_libraries(eva
 PRIVATE
     ${Vulkan_LIBRARIES}
-    glfw
     spirv-reflect-static
 )
 
+# Window support
+if(EVA_ENABLE_WINDOW)
+    target_compile_definitions(eva PUBLIC EVA_ENABLE_WINDOW)
+    target_link_libraries(eva PRIVATE glfw)
+endif()
+
 # Android
 if(ANDROID)
-    target_link_libraries(eva
-    PRIVATE
-        android
-    )
+    target_link_libraries(eva PRIVATE android)
 endif()
 
 # Raytracing support
-if(EVA_INCLUDE_RAYTRACING)
-    target_compile_definitions(eva PUBLIC EVA_INCLUDE_RAYTRACING)
+if(EVA_ENABLE_RAYTRACING)
+    target_compile_definitions(eva PUBLIC EVA_ENABLE_RAYTRACING)
 endif()
 
 
@@ -227,7 +232,9 @@ endfunction()
 ################################################################################
 # Samples
 ################################################################################
-if(EVA_BUILD_SAMPLES AND EVA_INCLUDE_RAYTRACING)
+if(EVA_BUILD_SAMPLES AND 
+EVA_ENABLE_RAYTRACING AND 
+EVA_ENABLE_WINDOW)
     message(STATUS "[EVA] Building sample projects...")
     add_subdirectory(samples/raytracing)
     message(STATUS "[EVA] Sample projects build configuration completed.")

@@ -53,7 +53,6 @@ class Semaphore;
 class ShaderModule;
 class ComputePipeline;
 class GraphicsPipeline;
-class RaytracingPipeline;
 
 class Buffer;
 class Image;
@@ -66,6 +65,7 @@ class DescriptorPool;
 class DescriptorSet;
 
 class Window;
+class RaytracingPipeline;
 class AccelerationStructure;
 
 
@@ -136,7 +136,6 @@ struct BufferMemoryBarrier;
 struct ImageMemoryBarrier;
 
 struct CopyRegion;
-
 struct WindowCreateInfo;
 
 
@@ -153,11 +152,7 @@ using SubmissionBatchInfo = std::tuple<
 
 struct BufferDescriptor;
 struct ImageDescriptor;
-#ifdef EVA_INCLUDE_RAYTRACING
-    using Descriptor = std::variant<BufferDescriptor, ImageDescriptor, AccelerationStructure>;
-#else
-    using Descriptor = std::variant<BufferDescriptor, ImageDescriptor>;
-#endif
+using Descriptor = std::variant<BufferDescriptor, ImageDescriptor, AccelerationStructure>;
 
 
 
@@ -168,7 +163,7 @@ struct ImageDescriptor;
 */
 namespace portable {
     constexpr uint32_t minMemoryMapAlignment = 64;      // min, vkMapMemory() minimum alignment
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_RAYTRACING
     constexpr uint32_t shaderGroupHandleSize = 32;      // exact, Size of a shader group handle
     constexpr uint32_t shaderGroupBaseAlignment = 64;   // max, Alignment for SBT base addresses
     constexpr uint32_t shaderGroupHandleAlignment = 32; // max, Alignment for SBT record addresses
@@ -176,7 +171,7 @@ namespace portable {
 #endif
 }
 
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_RAYTRACING
     struct AsBuildSizesInfo;
     struct AsCreateInfo;
     struct AsBuildInfo;
@@ -190,17 +185,21 @@ struct DeviceSettings {
     bool enableGraphicsQueues;
     bool enableComputeQueues;
     bool enableTransferQueues;
-    bool enablePresent;
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_WINDOW
+    bool enableWindow;
+#endif
+#ifdef EVA_ENABLE_RAYTRACING
     bool enableRaytracing;
 #endif
     // bool operator==(const DeviceSettings&) const = default;
     bool operator<=(const DeviceSettings& other) const {
         return (!enableGraphicsQueues || other.enableGraphicsQueues) &&
                (!enableComputeQueues  || other.enableComputeQueues)  &&
-               (!enableTransferQueues || other.enableTransferQueues) &&
-               (!enablePresent        || other.enablePresent)
-#ifdef EVA_INCLUDE_RAYTRACING
+               (!enableTransferQueues || other.enableTransferQueues)
+#ifdef EVA_ENABLE_WINDOW
+               && (!enableWindow      || other.enableWindow)
+#endif
+#ifdef EVA_ENABLE_RAYTRACING
                && (!enableRaytracing  || other.enableRaytracing)
 #endif
                ;
@@ -235,10 +234,12 @@ public:
     static Runtime& get();    // singleton pattern
     uint32_t deviceCount() const;
     Device device(int gpuIndex=-1); 
-    Device device(DeviceSettings settings);  
+    Device device(DeviceSettings settings);
 
+#ifdef EVA_ENABLE_WINDOW
     Window createWindow(WindowCreateInfo info);
     void destroyWindow(Window window);
+#endif
 };
 
 
@@ -279,7 +280,7 @@ public:
     PipelineLayout createPipelineLayout(PipelineLayoutDesc desc);
     DescriptorPool createDescriptorPool(const DescriptorPoolCreateInfo& info);
 
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_RAYTRACING
     RaytracingPipeline createRaytracingPipeline(const RaytracingPipelineCreateInfo& info);
 
     uint32_t shaderGroupHandleSize() const;
@@ -447,7 +448,7 @@ public:
         uint32_t numThreadsInZ=1
     );
 
-#ifdef EVA_INCLUDE_RAYTRACING
+#ifdef EVA_ENABLE_RAYTRACING
     CommandBuffer traceRays(
         ShaderBindingTable hitGroupSbt,
         uint32_t width,
@@ -650,42 +651,6 @@ inline std::vector<DescriptorSet> DescriptorPool::operator()(DescriptorSetLayout
     return (*this)(std::vector<DescriptorSetLayout>(count, layout));
 }
 
-
-struct WindowCreateInfo {
-    const char* title;
-    uint32_t width;
-    uint32_t height;
-    bool hidden = false;
-
-    Device device;
-    IMAGE_USAGE swapChainImageUsage;
-    uint32_t minSwapChainImages = 0;
-    FORMAT swapChainImageFormat = FORMAT::B8G8R8A8_SRGB;
-    COLOR_SPACE swapChainImageColorSpace = COLOR_SPACE::SRGB_NONLINEAR;
-    PRESENT_MODE preferredPresentMode = PRESENT_MODE::FIFO;
-};
-
-
-class Window {
-    VULKAN_CLASS_COMMON2(Window)
-
-public:
-    
-    const std::vector<Image>& swapChainImages() const;
-    uint32_t acquireNextImageIndex(Semaphore imageAvailableSemaphore) const;
-    Image acquireNextImage(Semaphore imageAvailableSemaphore) const;
-    void present(Queue queue, std::vector<Semaphore> waitSemaphore, uint32_t imageIndex) const;
-    void present(Queue queue, std::vector<Semaphore> waitSemaphore, Image image) const;
-    void present(Queue queue, std::vector<Semaphore> waitSemaphore) const;
-
-    bool shouldClose() const;
-    void pollEvents() const;
-
-    void setMouseButtonCallback(void (*callback)(int button, int action, double xpos, double ypos));
-    void setKeyCallback(void (*callback)(int key, int action, int mods));
-    void setCursorPosCallback(void (*callback)(double xpos, double ypos));
-    void setScrollCallback(void (*callback)(double xoffset, double yoffset));
-};
 
 
 
@@ -1646,7 +1611,47 @@ inline void operator<<(Submitting&& submitting, void(Waiting))
 
 
 
-#ifdef EVA_INCLUDE_RAYTRACING
+
+#ifdef EVA_ENABLE_WINDOW
+struct WindowCreateInfo {
+    const char* title;
+    uint32_t width;
+    uint32_t height;
+    bool hidden = false;
+
+    Device device;
+    IMAGE_USAGE swapChainImageUsage;
+    uint32_t minSwapChainImages = 0;
+    FORMAT swapChainImageFormat = FORMAT::B8G8R8A8_SRGB;
+    COLOR_SPACE swapChainImageColorSpace = COLOR_SPACE::SRGB_NONLINEAR;
+    PRESENT_MODE preferredPresentMode = PRESENT_MODE::FIFO;
+};
+
+
+class Window {
+    VULKAN_CLASS_COMMON2(Window)
+
+public:
+
+    const std::vector<Image>& swapChainImages() const;
+    uint32_t acquireNextImageIndex(Semaphore imageAvailableSemaphore) const;
+    Image acquireNextImage(Semaphore imageAvailableSemaphore) const;
+    void present(Queue queue, std::vector<Semaphore> waitSemaphore, uint32_t imageIndex) const;
+    void present(Queue queue, std::vector<Semaphore> waitSemaphore, Image image) const;
+    void present(Queue queue, std::vector<Semaphore> waitSemaphore) const;
+
+    bool shouldClose() const;
+    void pollEvents() const;
+
+    void setMouseButtonCallback(void (*callback)(int button, int action, double xpos, double ypos));
+    void setKeyCallback(void (*callback)(int key, int action, int mods));
+    void setCursorPosCallback(void (*callback)(double xpos, double ypos));
+    void setScrollCallback(void (*callback)(double xoffset, double yoffset));
+};
+#endif // EVA_ENABLE_WINDOW
+
+
+#ifdef EVA_ENABLE_RAYTRACING
 class RaytracingPipeline {
     VULKAN_CLASS_COMMON2(RaytracingPipeline)
 public:
@@ -1779,7 +1784,7 @@ struct AsBuildInfo {
 #else
 class RaytracingPipeline {};
 class AccelerationStructure {};
-#endif // EVA_INCLUDE_RAYTRACING
+#endif // EVA_ENABLE_RAYTRACING
 
 
 } // namespace eva
