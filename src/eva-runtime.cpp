@@ -2337,7 +2337,7 @@ PipelineLayoutDesc ShaderModule::extractPipelineLayoutDesc() const
     return ::extractPipelineLayoutDesc(impl().pModule);
 }
 
-inline ShaderModule::operator uint64_t() const
+ShaderModule::operator uint64_t() const
 {
     return (uint64_t) *ppImpl;
 }
@@ -2440,7 +2440,7 @@ uint64_t SpecializationConstant::hash() const noexcept
 }
 
 
-inline bool ShaderStage::operator==(const ShaderStage& other) const noexcept
+bool ShaderStage::operator==(const ShaderStage& other) const noexcept
 {
     if (!shader.has_value() && !other.shader.has_value())
         return true;
@@ -2837,7 +2837,13 @@ Buffer Device::createBuffer(const BufferCreateInfo& info)
         pImpl->deviceAddress = vkGetBufferDeviceAddressKHR_(impl().vkDevice, &addressInfo);
     }
 
-    return *impl().buffers.insert(new Buffer::Impl*(pImpl)).first;
+    Buffer result = *impl().buffers.insert(new Buffer::Impl*(pImpl)).first;
+    // @chay116 - BEGIN
+    // Set cached values for inline accessors
+    result._cachedSize = info.size;
+    result._cachedUsage = info.usage;
+    // @chay116 - END
+    return result;
 }
 
 uint8_t* Buffer::map(uint64_t offset, uint64_t size)
@@ -2897,15 +2903,7 @@ void Buffer::unmap()
     impl().mappedSize = 0;
 }
 
-inline uint64_t Buffer::size() const
-{
-    return impl().size;
-}
-
-BUFFER_USAGE Buffer::usage() const
-{
-    return impl().usage;
-}
+// @chay116 - Buffer::size() and Buffer::usage() moved to eva-runtime.h as inline
 
 MEMORY_PROPERTY Buffer::memoryProperties() const
 {
