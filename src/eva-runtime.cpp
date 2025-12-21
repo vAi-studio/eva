@@ -1138,6 +1138,18 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             //.shaderSharedFloat32AtomicAdd = VK_TRUE,
         });
 
+        // @chay116 2025/12/21 - Enable 16-bit storage for FP16 weight shaders
+        chain.add(VkPhysicalDeviceVulkan11Features{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+            .storageBuffer16BitAccess = VK_TRUE,
+        });
+
+        // @chay116 2025/12/21 - Enable FP16 arithmetic for f16vec4 operations
+        chain.add(VkPhysicalDeviceShaderFloat16Int8Features{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES,
+            .shaderFloat16 = VK_TRUE,
+        });
+
 #ifdef EVA_ENABLE_RAYTRACING
         if (settings.enableRaytracing)
         {
