@@ -917,6 +917,61 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     }
 #endif
 
+    // @chay116 2025/12/18 - VK_KHR_cooperative_matrix for Tensor Core GEMM
+    // @chay116 2025/12/19 - Added VK_NV_cooperative_matrix2 with feature query (llama.cpp style)
+    bool coopmat2_supported = false;
+    if (settings.enableCooperativeMatrix)
+    {
+        reqExtentions.push_back(VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);
+
+        // Check if VK_NV_cooperative_matrix2 extension is available
+        auto deviceExtensions = arrayFrom(vkEnumerateDeviceExtensionProperties, pd, nullptr);
+        bool coopmat2_ext_available = std::any_of(deviceExtensions.begin(), deviceExtensions.end(),
+            [](const auto& props) {
+                return strcmp(props.extensionName, "VK_NV_cooperative_matrix2") == 0;
+            });
+
+        if (coopmat2_ext_available)
+        {
+            // Query coopmat2 features (llama.cpp style)
+            VkPhysicalDeviceCooperativeMatrix2FeaturesNV coopmat2_features{};
+            coopmat2_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_2_FEATURES_NV;
+            coopmat2_features.pNext = nullptr;
+
+            VkPhysicalDeviceFeatures2 features2{};
+            features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            features2.pNext = &coopmat2_features;
+            vkGetPhysicalDeviceFeatures2(pd, &features2);
+
+            // Check all required features (llama.cpp checks these)
+            if (coopmat2_features.cooperativeMatrixWorkgroupScope &&
+                coopmat2_features.cooperativeMatrixFlexibleDimensions &&
+                coopmat2_features.cooperativeMatrixReductions &&
+                coopmat2_features.cooperativeMatrixConversions &&
+                coopmat2_features.cooperativeMatrixPerElementOperations &&
+                coopmat2_features.cooperativeMatrixTensorAddressing &&
+                coopmat2_features.cooperativeMatrixBlockLoads)
+            {
+                reqExtentions.push_back("VK_NV_cooperative_matrix2");
+                coopmat2_supported = true;
+                printf("[EVA] VK_NV_cooperative_matrix2 enabled (all features supported)\n");
+            }
+            else
+            {
+                printf("[EVA] VK_NV_cooperative_matrix2 available but missing features:\n");
+                printf("  WorkgroupScope=%d FlexibleDims=%d Reductions=%d Conversions=%d\n",
+                    coopmat2_features.cooperativeMatrixWorkgroupScope,
+                    coopmat2_features.cooperativeMatrixFlexibleDimensions,
+                    coopmat2_features.cooperativeMatrixReductions,
+                    coopmat2_features.cooperativeMatrixConversions);
+                printf("  PerElementOps=%d TensorAddr=%d BlockLoads=%d\n",
+                    coopmat2_features.cooperativeMatrixPerElementOperations,
+                    coopmat2_features.cooperativeMatrixTensorAddressing,
+                    coopmat2_features.cooperativeMatrixBlockLoads);
+            }
+        }
+    }
+
     if (!deviceSupportsExtensions(pd, reqExtentions))
     {
         throw std::runtime_error("The selected physical device does not support the required extensions.");
@@ -1100,6 +1155,31 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             });
         }
 #endif
+
+        // @chay116 2025/12/18 - VK_KHR_cooperative_matrix for Tensor Core GEMM
+        if (settings.enableCooperativeMatrix)
+        {
+            chain.add(VkPhysicalDeviceCooperativeMatrixFeaturesKHR{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR,
+                .cooperativeMatrix = VK_TRUE,
+            });
+
+            // @chay116 2025/12/19 - VK_NV_cooperative_matrix2 for tensor operations (coopMatLoadTensorNV etc.)
+            // Enable all features if supported (detected in extension query phase)
+            if (coopmat2_supported)
+            {
+                chain.add(VkPhysicalDeviceCooperativeMatrix2FeaturesNV{
+                    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_2_FEATURES_NV,
+                    .cooperativeMatrixWorkgroupScope = VK_TRUE,
+                    .cooperativeMatrixFlexibleDimensions = VK_TRUE,
+                    .cooperativeMatrixReductions = VK_TRUE,
+                    .cooperativeMatrixConversions = VK_TRUE,
+                    .cooperativeMatrixPerElementOperations = VK_TRUE,
+                    .cooperativeMatrixTensorAddressing = VK_TRUE,
+                    .cooperativeMatrixBlockLoads = VK_TRUE,
+                });
+            }
+        }
     }
 
     VkDeviceCreateInfo deviceCreateInfo{

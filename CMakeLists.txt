@@ -204,7 +204,8 @@ function(eva_compile_shaders)
 
         add_custom_command(
             OUTPUT ${SHADER_OUTPUT}
-            COMMAND ${EVA_GLSLC} --target-env=vulkan1.2 -o ${SHADER_OUTPUT} ${SHADER_SOURCE_ABS}
+            # @chay116 2025/12/19 - Use vulkan1.3 for NV_cooperative_matrix2 support
+            COMMAND ${EVA_GLSLC} --target-env=vulkan1.3 -o ${SHADER_OUTPUT} ${SHADER_SOURCE_ABS}
             DEPENDS ${SHADER_SOURCE_ABS}
             COMMENT "[EVA] Compiling shader: ${SHADER_NAME} -> ${SHADER_NAME}.spv"
             VERBATIM

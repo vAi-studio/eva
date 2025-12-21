@@ -191,6 +191,7 @@ struct DeviceSettings {
 #ifdef EVA_ENABLE_RAYTRACING
     bool enableRaytracing;
 #endif
+    bool enableCooperativeMatrix;  // @chay116 2025/12/18 - VK_KHR_cooperative_matrix for Tensor Core
     // bool operator==(const DeviceSettings&) const = default;
     bool operator<=(const DeviceSettings& other) const {
         return (!enableGraphicsQueues || other.enableGraphicsQueues) &&
@@ -202,6 +203,7 @@ struct DeviceSettings {
 #ifdef EVA_ENABLE_RAYTRACING
                && (!enableRaytracing  || other.enableRaytracing)
 #endif
+               && (!enableCooperativeMatrix || other.enableCooperativeMatrix)
                ;
     }
 };
