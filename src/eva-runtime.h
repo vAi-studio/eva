@@ -1002,6 +1002,7 @@ inline ShaderStage operator+(ShaderInput shader, ConstantID<ID, T> constant)
 struct ComputePipelineCreateInfo {
     ShaderStage csStage;
     std::optional<PipelineLayout> layout;
+    bool autoLayoutAllowAllStages = false;
 };
 
 
@@ -1705,6 +1706,7 @@ struct RaytracingPipelineCreateInfo {
     std::vector<HitGroup> hitGroups;
     uint32_t maxRecursionDepth = 1;
     std::optional<PipelineLayout> layout;
+    bool autoLayoutAllowAllStages = false;
 };
 
 

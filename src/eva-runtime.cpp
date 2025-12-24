@@ -1754,18 +1754,6 @@ CommandBuffer CommandBuffer::setPushConstants(
     return *this;
 }
 
-static std::map<SYNC_SCOPE::T, IMAGE_LAYOUT> defaultLayouts = 
-{
-    {SYNC_SCOPE::NONE, IMAGE_LAYOUT::UNDEFINED},
-    {SYNC_SCOPE::TRANSFER_SRC, IMAGE_LAYOUT::TRANSFER_SRC},
-    {SYNC_SCOPE::TRANSFER_DST, IMAGE_LAYOUT::TRANSFER_DST},
-    {SYNC_SCOPE::COMPUTE_READ, IMAGE_LAYOUT::SHADER_READ_ONLY},
-    {SYNC_SCOPE::COMPUTE_WRITE, IMAGE_LAYOUT::GENERAL},
-    {SYNC_SCOPE::RAYTRACING_READ, IMAGE_LAYOUT::SHADER_READ_ONLY},
-    {SYNC_SCOPE::RAYTRACING_WRITE, IMAGE_LAYOUT::GENERAL},
-    {SYNC_SCOPE::PRESENT_SRC, IMAGE_LAYOUT::PRESENT_SRC},
-};
-
 CommandBuffer CommandBuffer::barrier(
     std::vector<BarrierInfo> barrierInfos)
 {
@@ -1830,11 +1818,35 @@ CommandBuffer CommandBuffer::barrier(
             }
             else if constexpr (std::is_same_v<T, ImageMemoryBarrier>) 
             {
+                static std::map<SYNC_SCOPE::T, IMAGE_LAYOUT> defaultLayouts = {
+                    {SYNC_SCOPE::NONE, IMAGE_LAYOUT::UNDEFINED},
+                    {SYNC_SCOPE::TRANSFER_SRC, IMAGE_LAYOUT::TRANSFER_SRC},
+                    {SYNC_SCOPE::TRANSFER_DST, IMAGE_LAYOUT::TRANSFER_DST},
+                    {SYNC_SCOPE::COMPUTE_READ, IMAGE_LAYOUT::SHADER_READ_ONLY},
+                    {SYNC_SCOPE::COMPUTE_WRITE, IMAGE_LAYOUT::GENERAL},
+                    {SYNC_SCOPE::RAYTRACING_READ, IMAGE_LAYOUT::SHADER_READ_ONLY},
+                    {SYNC_SCOPE::RAYTRACING_WRITE, IMAGE_LAYOUT::GENERAL},
+                    {SYNC_SCOPE::PRESENT_SRC, IMAGE_LAYOUT::PRESENT_SRC},
+                };
+
                 if (barrier.oldLayout == IMAGE_LAYOUT::UNDEFINED && 
                     barrier.newLayout == IMAGE_LAYOUT::UNDEFINED) 
                 {
                     barrier.oldLayout = defaultLayouts.at(barrier.srcMask.scope);
                     barrier.newLayout = defaultLayouts.at(barrier.dstMask.scope);
+
+                    // Storage-only images must use GENERAL layout (not SHADER_READ_ONLY)
+                    // But if SAMPLED_BIT is also set, SHADER_READ_ONLY is valid for sampling
+                    VkImageUsageFlags usage = (VkImageUsageFlags)(uint32_t) barrier.image.impl().usage;
+                    bool isStorageOnly = (usage & VK_IMAGE_USAGE_STORAGE_BIT) != 0 &&
+                                         (usage & VK_IMAGE_USAGE_SAMPLED_BIT) == 0;
+                    if (isStorageOnly)
+                    {
+                        if (barrier.oldLayout == IMAGE_LAYOUT::SHADER_READ_ONLY)
+                            barrier.oldLayout = IMAGE_LAYOUT::GENERAL;
+                        if (barrier.newLayout == IMAGE_LAYOUT::SHADER_READ_ONLY)
+                            barrier.newLayout = IMAGE_LAYOUT::GENERAL;
+                    }
 
                     if (barrier.oldLayout == IMAGE_LAYOUT::PRESENT_SRC) 
                     {
@@ -2486,10 +2498,28 @@ ComputePipeline Device::createComputePipeline(const ComputePipelineCreateInfo& i
         createTempModule = true;
     }
 
-    EVA_ASSERT(csModule.hasReflect()); 
+    EVA_ASSERT(csModule.hasReflect());
 
     auto [sizeX, sizeY, sizeZ] = extractWorkGroupSize(csModule.impl().pModule);
-    PipelineLayout layout = info.layout.value_or(createPipelineLayout(csModule.extractPipelineLayoutDesc()));
+
+    PipelineLayout layout;
+    if (info.layout.has_value()) 
+    {
+        layout = info.layout.value();
+    } 
+    else 
+    {
+        auto layoutDesc = csModule.extractPipelineLayoutDesc();
+        if (info.autoLayoutAllowAllStages) 
+        {
+            for (auto& [setId, setLayout] : layoutDesc.setLayouts) 
+                for (auto& [bindId, binding] : setLayout.bindings) 
+                    binding.stageFlags = SHADER_STAGE::ALL;
+            if (layoutDesc.pushConstant)
+                layoutDesc.pushConstant->stageFlags = SHADER_STAGE::ALL;
+        }
+        layout = createPipelineLayout(std::move(layoutDesc));
+    }
 
     const auto& spec = info.csStage.specialization;
     
@@ -2677,13 +2707,27 @@ RaytracingPipeline Device::createRaytracingPipeline(const RaytracingPipelineCrea
         }
     }
 
-    PipelineLayout layout = info.layout.value_or(
-        [&](PipelineLayoutDesc&& desc) {
-            for (auto& m : modules)
-                desc |= m.extractPipelineLayoutDesc();
-            return createPipelineLayout(std::move(desc));
-        }({})
-    );
+    PipelineLayout layout;
+    if (info.layout.has_value()) 
+    {
+        layout = info.layout.value();
+    } 
+    else 
+    {
+        PipelineLayoutDesc layoutDesc;
+        for (auto& m : modules)
+            layoutDesc |= m.extractPipelineLayoutDesc();
+            
+        if (info.autoLayoutAllowAllStages) 
+        {
+            for (auto& [setId, setLayout] : layoutDesc.setLayouts) 
+                for (auto& [bindId, binding] : setLayout.bindings) 
+                    binding.stageFlags = SHADER_STAGE::ALL;
+            if (layoutDesc.pushConstant)
+                layoutDesc.pushConstant->stageFlags = SHADER_STAGE::ALL;
+        }
+        layout = createPipelineLayout(std::move(layoutDesc));
+    }
 
     VkRayTracingPipelineCreateInfoKHR rtci{ 
         .sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR,
