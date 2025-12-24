@@ -10,6 +10,7 @@
 #include <tuple>
 #include <utility>
 #include <cstring>
+#include <functional>
 
 #define VULKAN_VERSION_1_3  // TODO: whether to use this or not depends on the system
 
@@ -258,6 +259,7 @@ public:
     CommandPool createCommandPool(QueueType type, COMMAND_POOL_CREATE flags=COMMAND_POOL_CREATE::NONE);
     CommandPool setDefalutCommandPool(QueueType type, CommandPool cmdPool);
     CommandBuffer newCommandBuffer(QueueType type, COMMAND_POOL_CREATE poolFlags=COMMAND_POOL_CREATE::NONE);
+    std::vector<CommandBuffer> newCommandBuffers(uint32_t count, QueueType type, COMMAND_POOL_CREATE poolFlags=COMMAND_POOL_CREATE::NONE);
     
     Fence createFence(bool signaled=false);
     Result waitFences(std::vector<Fence> fences, bool waitAll, uint64_t timeout=uint64_t(-1));
@@ -487,8 +489,8 @@ class Semaphore {
     VULKAN_CLASS_COMMON2(Semaphore)
 public:
 
-    SemaphoreStage operator/(PIPELINE_STAGE stage) const;
-    
+    SemaphoreStage operator()(PIPELINE_STAGE stage) const;
+
 };
 
 
@@ -1413,15 +1415,13 @@ struct SemaphoreStage {
     const Semaphore sem;
     const PIPELINE_STAGE stage;
 
-    // constexpr SemaphoreStage() : sem{}, stage{} {} <---for why? 윈도우에서 에러
-
     SemaphoreStage(
         Semaphore sem, 
         PIPELINE_STAGE stage=PIPELINE_STAGE::ALL_COMMANDS) 
     : sem(sem), stage(stage) {}
 };
 
-inline SemaphoreStage Semaphore::operator/(PIPELINE_STAGE stage) const
+inline SemaphoreStage Semaphore::operator()(PIPELINE_STAGE stage) const
 {
     return {*this, stage};
 }
@@ -1625,6 +1625,15 @@ struct WindowCreateInfo {
     FORMAT swapChainImageFormat = FORMAT::B8G8R8A8_SRGB;
     COLOR_SPACE swapChainImageColorSpace = COLOR_SPACE::SRGB_NONLINEAR;
     PRESENT_MODE preferredPresentMode = PRESENT_MODE::FIFO;
+
+    /*
+    * prePresentCommandBuffer needs to be allocated:
+    * - prePresentCommandPool을 지정하였다면, 우선적으로 그것을 사용하여 생성
+    * - prePresentCommandPool이 지정되지 않았다면, device의 prePresentCommandPoolType 타입의 (디바이스에 내제된)기본 커맨드 풀을 사용하여 생성
+    */
+    CommandPool prePresentCommandPool;
+    QueueType prePresentCommandPoolType = queue_graphics; // must be compatible with the present queue family
+    COMMAND_POOL_CREATE prePresentCommandPoolFlags = COMMAND_POOL_CREATE::NONE;
 };
 
 
@@ -1632,17 +1641,25 @@ class Window {
     VULKAN_CLASS_COMMON2(Window)
 
 public:
-
     const std::vector<Image>& swapChainImages() const;
-    uint32_t acquireNextImageIndex(Semaphore imageAvailableSemaphore) const;
-    Image acquireNextImage(Semaphore imageAvailableSemaphore) const;
+
+    void recordPrePresentCommands(std::function<void(CommandBuffer, Image)> recordFunc);
+
+    uint32_t acquireNextImageIndex(Semaphore onNextScImageWritable) const;
     void present(Queue queue, std::vector<Semaphore> waitSemaphore, uint32_t imageIndex) const;
-    void present(Queue queue, std::vector<Semaphore> waitSemaphore, Image image) const;
-    void present(Queue queue, std::vector<Semaphore> waitSemaphore) const;
+
+    std::pair<CommandBuffer, Semaphore> getNextPresentingContext(Semaphore onNextScImageWritable) const;
+    void present(Queue queue) const;
 
     bool shouldClose() const;
     void pollEvents() const;
 
+    // Bring window to front and request user attention
+    void focus() const;
+
+    void setTitle(const char* title) const;
+
+    // Input callback setters
     void setMouseButtonCallback(void (*callback)(int button, int action, double xpos, double ypos));
     void setKeyCallback(void (*callback)(int key, int action, int mods));
     void setCursorPosCallback(void (*callback)(double xpos, double ypos));

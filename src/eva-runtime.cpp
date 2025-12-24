@@ -1293,11 +1293,16 @@ CommandPool Device::setDefalutCommandPool(QueueType type, CommandPool cmdPool)
 
 CommandBuffer Device::newCommandBuffer(QueueType type, COMMAND_POOL_CREATE poolFlags)
 {
+    return newCommandBuffers(1, type, poolFlags)[0];
+}
+
+std::vector<CommandBuffer> Device::newCommandBuffers(uint32_t count, QueueType type, COMMAND_POOL_CREATE poolFlags)
+{
     EVA_ASSERT(impl().qfIndex[type] != uint32_t(-1));
-    if (!impl().defaultCmdPool[type][(uint32_t)poolFlags]) 
+    if (!impl().defaultCmdPool[type][(uint32_t)poolFlags])
         impl().defaultCmdPool[type][(uint32_t)poolFlags] = createCommandPool(type, poolFlags);
-    
-    return impl().defaultCmdPool[type][(uint32_t)poolFlags].newCommandBuffer();
+
+    return impl().defaultCmdPool[type][(uint32_t)poolFlags].newCommandBuffers(count);
 }
 
 
@@ -3374,18 +3379,14 @@ DescriptorSet DescriptorSet::operator=(std::vector<DescriptorSet>&& data)
 struct Window::Impl {
     const GLFWwindow* pWindow;
     const VkSurfaceKHR vkSurface;
-    std::string title;
     uint32_t width = 0;
     uint32_t height = 0;
 
-    enum ImageState{
-        acquired,
-    };
     VkInstance vkInstance;
     VkDevice vkDevice;
     VkSwapchainKHR vkSwapchain;
     std::vector<Image> swapchainImages;
-    mutable std::deque<uint32_t> availableSwapchainImageIndices;
+    mutable uint32_t presentingImgIdx = uint32_t(-1);
     FORMAT swapchainImageFormat;
 
     // Input callbacks
@@ -3394,10 +3395,13 @@ struct Window::Impl {
     void (*cursorPosCallback)(double xpos, double ypos) = nullptr;
     void (*scrollCallback)(double xoffset, double yoffset) = nullptr;
 
+    // Pre-present command buffers (one per swapchain image)
+    std::vector<CommandBuffer> prePresentCommandBuffers;
+    std::vector<Semaphore> presentableSemaphores;
+
     Impl(
         const GLFWwindow* pWindow,
         const VkSurfaceKHR vkSurface,
-        const std::string& title,
         uint32_t width,
         uint32_t height,
         VkInstance vkInstance,
@@ -3407,7 +3411,6 @@ struct Window::Impl {
         FORMAT swapchainImageFormat)
         : pWindow(pWindow)
         , vkSurface(vkSurface)
-        , title(title)
         , width(width)
         , height(height)
         , vkInstance(vkInstance)
@@ -3416,7 +3419,6 @@ struct Window::Impl {
         , swapchainImages(std::move(swapchainImages))
         , swapchainImageFormat(swapchainImageFormat)
     {
-        // swapchainImageStates.resize(this->swapchainImages.size(), ImageState::acquired);
     }
     ~Impl() {
         for (auto image : swapchainImages)
@@ -3427,7 +3429,7 @@ struct Window::Impl {
         vkDestroySurfaceKHR(vkInstance, vkSurface, nullptr);
         glfwDestroyWindow((GLFWwindow*)pWindow);
     }
-    
+
 };
 
 Window Runtime::createWindow(WindowCreateInfo info)
@@ -3515,7 +3517,7 @@ Window Runtime::createWindow(WindowCreateInfo info)
         .clipped = VK_TRUE,                                     // it allow to skip fragment shader of final render pass for pixels that are not visible 
     });
 
-    std::vector<Image> swapchainImages; 
+    std::vector<Image> swapchainImages;
     {
         auto vkImages = arrayFrom(vkGetSwapchainImagesKHR, info.device.impl().vkDevice, vkSwapchain);
         swapchainImages.reserve(vkImages.size());
@@ -3526,8 +3528,8 @@ Window Runtime::createWindow(WindowCreateInfo info)
                 vkImage,
                 VK_NULL_HANDLE,    // memory is owned by the swapchain
                 info.swapChainImageFormat,
-                info.width, 
-                info.height, 
+                info.width,
+                info.height,
                 1,                  // depth
                 1,                  // arrayLayers
                 info.swapChainImageUsage,
@@ -3541,7 +3543,6 @@ Window Runtime::createWindow(WindowCreateInfo info)
     auto pImpl = new Window::Impl(
         pWindow,
         vkSurface,
-        info.title,
         info.width,
         info.height,
         impl().instance,
@@ -3551,12 +3552,29 @@ Window Runtime::createWindow(WindowCreateInfo info)
         info.swapChainImageFormat
     );
 
+    auto numImages = pImpl->swapchainImages.size();
+
+    pImpl->presentableSemaphores.resize(numImages);
+    for (uint32_t i = 0; i < numImages; ++i)
+        pImpl->presentableSemaphores[i] = info.device.createSemaphore();
+
+    if (info.prePresentCommandPool)
+        pImpl->prePresentCommandBuffers = info.prePresentCommandPool.newCommandBuffers(numImages);
+    else
+        pImpl->prePresentCommandBuffers = info.device.newCommandBuffers(numImages, info.prePresentCommandPoolType, info.prePresentCommandPoolFlags);
+
     return impl().windows.emplace_back(new Window::Impl*(pImpl));
 }
 
 const std::vector<Image>& Window::swapChainImages() const
 {
     return impl().swapchainImages;
+}
+
+void Window::recordPrePresentCommands(std::function<void(CommandBuffer, Image)> recordFunc)
+{
+    for (size_t i = 0; i < impl().swapchainImages.size(); ++i)
+        recordFunc(impl().prePresentCommandBuffers[i], impl().swapchainImages[i]);
 }
 
 /*
@@ -3571,24 +3589,18 @@ currently acquired is greater than S-M. If vkAcquireNextImageKHR is called when 
 images that the application has currently acquired is less than or equal to S-M,
 vkAcquireNextImageKHR must return in finite time with an allowed VkResult code.
 */
-uint32_t Window::acquireNextImageIndex(Semaphore imageAvailableSemaphore) const
+uint32_t Window::acquireNextImageIndex(Semaphore onNextScImageWritable) const
 {
     uint32_t imageIndex = 0;
     ASSERT_SUCCESS(vkAcquireNextImageKHR(
         impl().vkDevice,
         impl().vkSwapchain,
         UINT64_MAX,         // no timeout for simplicity
-        imageAvailableSemaphore.impl().vkSemaphore,
+        onNextScImageWritable.impl().vkSemaphore,
         VK_NULL_HANDLE,     // no fence for simplicity
         &imageIndex));
 
-    impl().availableSwapchainImageIndices.push_back(imageIndex);
     return imageIndex;
-}
-
-Image Window::acquireNextImage(Semaphore imageAvailableSemaphore) const
-{
-    return impl().swapchainImages[acquireNextImageIndex(imageAvailableSemaphore)];
 }
 
 void Window::present(Queue queue, std::vector<Semaphore> waitSemaphores, uint32_t imageIndex) const
@@ -3608,28 +3620,25 @@ void Window::present(Queue queue, std::vector<Semaphore> waitSemaphores, uint32_
     ASSERT_SUCCESS(vkQueuePresentKHR(queue.impl().vkQueue, &presentInfo));
 }
 
-void Window::present(Queue queue, std::vector<Semaphore> waitSemaphores, Image image) const
+std::pair<CommandBuffer, Semaphore> Window::getNextPresentingContext(Semaphore onNextScImageWritable) const
 {
-    auto& avail = impl().availableSwapchainImageIndices;
-    auto& images = impl().swapchainImages;
-    auto it = std::find_if(avail.begin(), avail.end(), [&](uint32_t index) {return images[index] == image;});
+    uint32_t imageIndex = acquireNextImageIndex(onNextScImageWritable);
+    EVA_ASSERT(impl().presentingImgIdx == uint32_t(-1));
+    impl().presentingImgIdx = imageIndex;
 
-    if (it == avail.end())
-        throw std::runtime_error("Given image does not belong to this swapchain.");
-    avail.erase(it);
-
-    present(queue, std::move(waitSemaphores), *it);
+    return {
+        impl().prePresentCommandBuffers[imageIndex],
+        impl().presentableSemaphores[imageIndex]
+    };
 }
 
-void Window::present(Queue queue, std::vector<Semaphore> waitSemaphores) const
+void Window::present(Queue queue) const
 {
-    if (impl().availableSwapchainImageIndices.empty())
-        throw std::runtime_error("No acquired swapchain image available for presentation.");
-    
-    uint32_t imageIndex = impl().availableSwapchainImageIndices.front();
-    impl().availableSwapchainImageIndices.pop_front();
+    uint32_t imageIndex = impl().presentingImgIdx;
+    EVA_ASSERT(imageIndex != uint32_t(-1));
+    impl().presentingImgIdx = uint32_t(-1);
 
-    present(queue, std::move(waitSemaphores), imageIndex);
+    present(queue, {impl().presentableSemaphores[imageIndex]}, imageIndex);
 }
 
 bool Window::shouldClose() const
@@ -3640,6 +3649,20 @@ bool Window::shouldClose() const
 void Window::pollEvents() const
 {
     glfwPollEvents();
+}
+
+void Window::focus() const
+{
+    GLFWwindow* window = (GLFWwindow*)impl().pWindow;
+    if (window) {
+        glfwFocusWindow(window);
+        glfwRequestWindowAttention(window);
+    }
+}
+
+void Window::setTitle(const char* title) const
+{
+    glfwSetWindowTitle((GLFWwindow*)impl().pWindow, title);
 }
 
 void Window::setMouseButtonCallback(void (*callback)(int button, int action, double xpos, double ypos))
