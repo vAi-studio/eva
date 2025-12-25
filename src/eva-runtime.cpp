@@ -35,6 +35,11 @@
     #endif
 #endif
 
+namespace eva {
+    static bool gCoopMat2Supported = false;
+    bool isCoopMat2Supported() { return gCoopMat2Supported; }
+}
+
 std::vector<const char*> getRequiredInstanceExtensions()
 {
 #ifdef EVA_ENABLE_WINDOW
@@ -917,8 +922,8 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     }
 #endif
 
-    // @chay116 2025/12/18 - VK_KHR_cooperative_matrix for Tensor Core GEMM
-    // @chay116 2025/12/19 - Added VK_NV_cooperative_matrix2 with feature query (llama.cpp style)
+    // VK_KHR_cooperative_matrix for Tensor Core GEMM
+    // VK_NV_cooperative_matrix2 for tensor operations (llama.cpp style)
     bool coopmat2_supported = false;
     if (settings.enableCooperativeMatrix)
     {
@@ -1168,7 +1173,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         }
 #endif
 
-        // @chay116 2025/12/18 - VK_KHR_cooperative_matrix for Tensor Core GEMM
+        // VK_KHR_cooperative_matrix for Tensor Core GEMM
         if (settings.enableCooperativeMatrix)
         {
             chain.add(VkPhysicalDeviceCooperativeMatrixFeaturesKHR{
@@ -1176,7 +1181,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
                 .cooperativeMatrix = VK_TRUE,
             });
 
-            // @chay116 2025/12/19 - VK_NV_cooperative_matrix2 for tensor operations (coopMatLoadTensorNV etc.)
+            // VK_NV_cooperative_matrix2 for tensor operations (coopMatLoadTensorNV etc.)
             // Enable all features if supported (detected in extension query phase)
             if (coopmat2_supported)
             {
@@ -1190,6 +1195,9 @@ Device Runtime::createDevice(const DeviceSettings& settings)
                     .cooperativeMatrixTensorAddressing = VK_TRUE,
                     .cooperativeMatrixBlockLoads = VK_TRUE,
                 });
+
+                // Set global flag for runtime query
+                eva::gCoopMat2Supported = true;
             }
         }
     }
@@ -1385,11 +1393,16 @@ CommandPool Device::setDefalutCommandPool(QueueType type, CommandPool cmdPool)
 
 CommandBuffer Device::newCommandBuffer(QueueType type, COMMAND_POOL_CREATE poolFlags)
 {
+    return newCommandBuffers(1, type, poolFlags)[0];
+}
+
+std::vector<CommandBuffer> Device::newCommandBuffers(uint32_t count, QueueType type, COMMAND_POOL_CREATE poolFlags)
+{
     EVA_ASSERT(impl().qfIndex[type] != uint32_t(-1));
-    if (!impl().defaultCmdPool[type][(uint32_t)poolFlags]) 
+    if (!impl().defaultCmdPool[type][(uint32_t)poolFlags])
         impl().defaultCmdPool[type][(uint32_t)poolFlags] = createCommandPool(type, poolFlags);
-    
-    return impl().defaultCmdPool[type][(uint32_t)poolFlags].newCommandBuffer();
+
+    return impl().defaultCmdPool[type][(uint32_t)poolFlags].newCommandBuffers(count);
 }
 
 
@@ -1841,18 +1854,6 @@ CommandBuffer CommandBuffer::setPushConstants(
     return *this;
 }
 
-static std::map<SYNC_SCOPE::T, IMAGE_LAYOUT> defaultLayouts = 
-{
-    {SYNC_SCOPE::NONE, IMAGE_LAYOUT::UNDEFINED},
-    {SYNC_SCOPE::TRANSFER_SRC, IMAGE_LAYOUT::TRANSFER_SRC},
-    {SYNC_SCOPE::TRANSFER_DST, IMAGE_LAYOUT::TRANSFER_DST},
-    {SYNC_SCOPE::COMPUTE_READ, IMAGE_LAYOUT::SHADER_READ_ONLY},
-    {SYNC_SCOPE::COMPUTE_WRITE, IMAGE_LAYOUT::GENERAL},
-    {SYNC_SCOPE::RAYTRACING_READ, IMAGE_LAYOUT::SHADER_READ_ONLY},
-    {SYNC_SCOPE::RAYTRACING_WRITE, IMAGE_LAYOUT::GENERAL},
-    {SYNC_SCOPE::PRESENT_SRC, IMAGE_LAYOUT::PRESENT_SRC},
-};
-
 CommandBuffer CommandBuffer::barrier(
     std::vector<BarrierInfo> barrierInfos)
 {
@@ -1917,11 +1918,35 @@ CommandBuffer CommandBuffer::barrier(
             }
             else if constexpr (std::is_same_v<T, ImageMemoryBarrier>) 
             {
+                static std::map<SYNC_SCOPE::T, IMAGE_LAYOUT> defaultLayouts = {
+                    {SYNC_SCOPE::NONE, IMAGE_LAYOUT::UNDEFINED},
+                    {SYNC_SCOPE::TRANSFER_SRC, IMAGE_LAYOUT::TRANSFER_SRC},
+                    {SYNC_SCOPE::TRANSFER_DST, IMAGE_LAYOUT::TRANSFER_DST},
+                    {SYNC_SCOPE::COMPUTE_READ, IMAGE_LAYOUT::SHADER_READ_ONLY},
+                    {SYNC_SCOPE::COMPUTE_WRITE, IMAGE_LAYOUT::GENERAL},
+                    {SYNC_SCOPE::RAYTRACING_READ, IMAGE_LAYOUT::SHADER_READ_ONLY},
+                    {SYNC_SCOPE::RAYTRACING_WRITE, IMAGE_LAYOUT::GENERAL},
+                    {SYNC_SCOPE::PRESENT_SRC, IMAGE_LAYOUT::PRESENT_SRC},
+                };
+
                 if (barrier.oldLayout == IMAGE_LAYOUT::UNDEFINED && 
                     barrier.newLayout == IMAGE_LAYOUT::UNDEFINED) 
                 {
                     barrier.oldLayout = defaultLayouts.at(barrier.srcMask.scope);
                     barrier.newLayout = defaultLayouts.at(barrier.dstMask.scope);
+
+                    // Storage-only images must use GENERAL layout (not SHADER_READ_ONLY)
+                    // But if SAMPLED_BIT is also set, SHADER_READ_ONLY is valid for sampling
+                    VkImageUsageFlags usage = (VkImageUsageFlags)(uint32_t) barrier.image.impl().usage;
+                    bool isStorageOnly = (usage & VK_IMAGE_USAGE_STORAGE_BIT) != 0 &&
+                                         (usage & VK_IMAGE_USAGE_SAMPLED_BIT) == 0;
+                    if (isStorageOnly)
+                    {
+                        if (barrier.oldLayout == IMAGE_LAYOUT::SHADER_READ_ONLY)
+                            barrier.oldLayout = IMAGE_LAYOUT::GENERAL;
+                        if (barrier.newLayout == IMAGE_LAYOUT::SHADER_READ_ONLY)
+                            barrier.newLayout = IMAGE_LAYOUT::GENERAL;
+                    }
 
                     if (barrier.oldLayout == IMAGE_LAYOUT::PRESENT_SRC) 
                     {
@@ -2573,10 +2598,28 @@ ComputePipeline Device::createComputePipeline(const ComputePipelineCreateInfo& i
         createTempModule = true;
     }
 
-    EVA_ASSERT(csModule.hasReflect()); 
+    EVA_ASSERT(csModule.hasReflect());
 
     auto [sizeX, sizeY, sizeZ] = extractWorkGroupSize(csModule.impl().pModule);
-    PipelineLayout layout = info.layout.value_or(createPipelineLayout(csModule.extractPipelineLayoutDesc()));
+
+    PipelineLayout layout;
+    if (info.layout.has_value()) 
+    {
+        layout = info.layout.value();
+    } 
+    else 
+    {
+        auto layoutDesc = csModule.extractPipelineLayoutDesc();
+        if (info.autoLayoutAllowAllStages) 
+        {
+            for (auto& [setId, setLayout] : layoutDesc.setLayouts) 
+                for (auto& [bindId, binding] : setLayout.bindings) 
+                    binding.stageFlags = SHADER_STAGE::ALL;
+            if (layoutDesc.pushConstant)
+                layoutDesc.pushConstant->stageFlags = SHADER_STAGE::ALL;
+        }
+        layout = createPipelineLayout(std::move(layoutDesc));
+    }
 
     const auto& spec = info.csStage.specialization;
     
@@ -2764,13 +2807,27 @@ RaytracingPipeline Device::createRaytracingPipeline(const RaytracingPipelineCrea
         }
     }
 
-    PipelineLayout layout = info.layout.value_or(
-        [&](PipelineLayoutDesc&& desc) {
-            for (auto& m : modules)
-                desc |= m.extractPipelineLayoutDesc();
-            return createPipelineLayout(std::move(desc));
-        }({})
-    );
+    PipelineLayout layout;
+    if (info.layout.has_value()) 
+    {
+        layout = info.layout.value();
+    } 
+    else 
+    {
+        PipelineLayoutDesc layoutDesc;
+        for (auto& m : modules)
+            layoutDesc |= m.extractPipelineLayoutDesc();
+            
+        if (info.autoLayoutAllowAllStages) 
+        {
+            for (auto& [setId, setLayout] : layoutDesc.setLayouts) 
+                for (auto& [bindId, binding] : setLayout.bindings) 
+                    binding.stageFlags = SHADER_STAGE::ALL;
+            if (layoutDesc.pushConstant)
+                layoutDesc.pushConstant->stageFlags = SHADER_STAGE::ALL;
+        }
+        layout = createPipelineLayout(std::move(layoutDesc));
+    }
 
     VkRayTracingPipelineCreateInfoKHR rtci{ 
         .sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR,
@@ -3464,18 +3521,14 @@ DescriptorSet DescriptorSet::operator=(std::vector<DescriptorSet>&& data)
 struct Window::Impl {
     const GLFWwindow* pWindow;
     const VkSurfaceKHR vkSurface;
-    std::string title;
     uint32_t width = 0;
     uint32_t height = 0;
 
-    enum ImageState{
-        acquired,
-    };
     VkInstance vkInstance;
     VkDevice vkDevice;
     VkSwapchainKHR vkSwapchain;
     std::vector<Image> swapchainImages;
-    mutable std::deque<uint32_t> availableSwapchainImageIndices;
+    mutable uint32_t presentingImgIdx = uint32_t(-1);
     FORMAT swapchainImageFormat;
 
     // Input callbacks
@@ -3484,10 +3537,13 @@ struct Window::Impl {
     void (*cursorPosCallback)(double xpos, double ypos) = nullptr;
     void (*scrollCallback)(double xoffset, double yoffset) = nullptr;
 
+    // Pre-present command buffers (one per swapchain image)
+    std::vector<CommandBuffer> prePresentCommandBuffers;
+    std::vector<Semaphore> presentableSemaphores;
+
     Impl(
         const GLFWwindow* pWindow,
         const VkSurfaceKHR vkSurface,
-        const std::string& title,
         uint32_t width,
         uint32_t height,
         VkInstance vkInstance,
@@ -3497,7 +3553,6 @@ struct Window::Impl {
         FORMAT swapchainImageFormat)
         : pWindow(pWindow)
         , vkSurface(vkSurface)
-        , title(title)
         , width(width)
         , height(height)
         , vkInstance(vkInstance)
@@ -3506,7 +3561,6 @@ struct Window::Impl {
         , swapchainImages(std::move(swapchainImages))
         , swapchainImageFormat(swapchainImageFormat)
     {
-        // swapchainImageStates.resize(this->swapchainImages.size(), ImageState::acquired);
     }
     ~Impl() {
         for (auto image : swapchainImages)
@@ -3517,7 +3571,7 @@ struct Window::Impl {
         vkDestroySurfaceKHR(vkInstance, vkSurface, nullptr);
         glfwDestroyWindow((GLFWwindow*)pWindow);
     }
-    
+
 };
 
 Window Runtime::createWindow(WindowCreateInfo info)
@@ -3605,7 +3659,7 @@ Window Runtime::createWindow(WindowCreateInfo info)
         .clipped = VK_TRUE,                                     // it allow to skip fragment shader of final render pass for pixels that are not visible 
     });
 
-    std::vector<Image> swapchainImages; 
+    std::vector<Image> swapchainImages;
     {
         auto vkImages = arrayFrom(vkGetSwapchainImagesKHR, info.device.impl().vkDevice, vkSwapchain);
         swapchainImages.reserve(vkImages.size());
@@ -3616,8 +3670,8 @@ Window Runtime::createWindow(WindowCreateInfo info)
                 vkImage,
                 VK_NULL_HANDLE,    // memory is owned by the swapchain
                 info.swapChainImageFormat,
-                info.width, 
-                info.height, 
+                info.width,
+                info.height,
                 1,                  // depth
                 1,                  // arrayLayers
                 info.swapChainImageUsage,
@@ -3631,7 +3685,6 @@ Window Runtime::createWindow(WindowCreateInfo info)
     auto pImpl = new Window::Impl(
         pWindow,
         vkSurface,
-        info.title,
         info.width,
         info.height,
         impl().instance,
@@ -3641,12 +3694,29 @@ Window Runtime::createWindow(WindowCreateInfo info)
         info.swapChainImageFormat
     );
 
+    auto numImages = pImpl->swapchainImages.size();
+
+    pImpl->presentableSemaphores.resize(numImages);
+    for (uint32_t i = 0; i < numImages; ++i)
+        pImpl->presentableSemaphores[i] = info.device.createSemaphore();
+
+    if (info.prePresentCommandPool)
+        pImpl->prePresentCommandBuffers = info.prePresentCommandPool.newCommandBuffers(numImages);
+    else
+        pImpl->prePresentCommandBuffers = info.device.newCommandBuffers(numImages, info.prePresentCommandPoolType, info.prePresentCommandPoolFlags);
+
     return impl().windows.emplace_back(new Window::Impl*(pImpl));
 }
 
 const std::vector<Image>& Window::swapChainImages() const
 {
     return impl().swapchainImages;
+}
+
+void Window::recordPrePresentCommands(std::function<void(CommandBuffer, Image)> recordFunc)
+{
+    for (size_t i = 0; i < impl().swapchainImages.size(); ++i)
+        recordFunc(impl().prePresentCommandBuffers[i], impl().swapchainImages[i]);
 }
 
 /*
@@ -3661,24 +3731,18 @@ currently acquired is greater than S-M. If vkAcquireNextImageKHR is called when 
 images that the application has currently acquired is less than or equal to S-M,
 vkAcquireNextImageKHR must return in finite time with an allowed VkResult code.
 */
-uint32_t Window::acquireNextImageIndex(Semaphore imageAvailableSemaphore) const
+uint32_t Window::acquireNextImageIndex(Semaphore onNextScImageWritable) const
 {
     uint32_t imageIndex = 0;
     ASSERT_SUCCESS(vkAcquireNextImageKHR(
         impl().vkDevice,
         impl().vkSwapchain,
         UINT64_MAX,         // no timeout for simplicity
-        imageAvailableSemaphore.impl().vkSemaphore,
+        onNextScImageWritable.impl().vkSemaphore,
         VK_NULL_HANDLE,     // no fence for simplicity
         &imageIndex));
 
-    impl().availableSwapchainImageIndices.push_back(imageIndex);
     return imageIndex;
-}
-
-Image Window::acquireNextImage(Semaphore imageAvailableSemaphore) const
-{
-    return impl().swapchainImages[acquireNextImageIndex(imageAvailableSemaphore)];
 }
 
 void Window::present(Queue queue, std::vector<Semaphore> waitSemaphores, uint32_t imageIndex) const
@@ -3698,28 +3762,25 @@ void Window::present(Queue queue, std::vector<Semaphore> waitSemaphores, uint32_
     ASSERT_SUCCESS(vkQueuePresentKHR(queue.impl().vkQueue, &presentInfo));
 }
 
-void Window::present(Queue queue, std::vector<Semaphore> waitSemaphores, Image image) const
+std::pair<CommandBuffer, Semaphore> Window::getNextPresentingContext(Semaphore onNextScImageWritable) const
 {
-    auto& avail = impl().availableSwapchainImageIndices;
-    auto& images = impl().swapchainImages;
-    auto it = std::find_if(avail.begin(), avail.end(), [&](uint32_t index) {return images[index] == image;});
+    uint32_t imageIndex = acquireNextImageIndex(onNextScImageWritable);
+    EVA_ASSERT(impl().presentingImgIdx == uint32_t(-1));
+    impl().presentingImgIdx = imageIndex;
 
-    if (it == avail.end())
-        throw std::runtime_error("Given image does not belong to this swapchain.");
-    avail.erase(it);
-
-    present(queue, std::move(waitSemaphores), *it);
+    return {
+        impl().prePresentCommandBuffers[imageIndex],
+        impl().presentableSemaphores[imageIndex]
+    };
 }
 
-void Window::present(Queue queue, std::vector<Semaphore> waitSemaphores) const
+void Window::present(Queue queue) const
 {
-    if (impl().availableSwapchainImageIndices.empty())
-        throw std::runtime_error("No acquired swapchain image available for presentation.");
-    
-    uint32_t imageIndex = impl().availableSwapchainImageIndices.front();
-    impl().availableSwapchainImageIndices.pop_front();
+    uint32_t imageIndex = impl().presentingImgIdx;
+    EVA_ASSERT(imageIndex != uint32_t(-1));
+    impl().presentingImgIdx = uint32_t(-1);
 
-    present(queue, std::move(waitSemaphores), imageIndex);
+    present(queue, {impl().presentableSemaphores[imageIndex]}, imageIndex);
 }
 
 bool Window::shouldClose() const
@@ -3730,6 +3791,20 @@ bool Window::shouldClose() const
 void Window::pollEvents() const
 {
     glfwPollEvents();
+}
+
+void Window::focus() const
+{
+    GLFWwindow* window = (GLFWwindow*)impl().pWindow;
+    if (window) {
+        glfwFocusWindow(window);
+        glfwRequestWindowAttention(window);
+    }
+}
+
+void Window::setTitle(const char* title) const
+{
+    glfwSetWindowTitle((GLFWwindow*)impl().pWindow, title);
 }
 
 void Window::setMouseButtonCallback(void (*callback)(int button, int action, double xpos, double ypos))
