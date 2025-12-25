@@ -42,6 +42,8 @@ typedef uint64_t DeviceSize;
 typedef uint32_t Flags;
 typedef uint32_t SampleMask;
 
+// Query if VK_NV_cooperative_matrix2 extension was enabled
+bool isCoopMat2Supported();
 
 class Runtime;
 class Device;
@@ -192,6 +194,7 @@ struct DeviceSettings {
 #ifdef EVA_ENABLE_RAYTRACING
     bool enableRaytracing;
 #endif
+    bool enableCooperativeMatrix = false;  // VK_KHR/NV cooperative matrix for Tensor Core
     // bool operator==(const DeviceSettings&) const = default;
     bool operator<=(const DeviceSettings& other) const {
         return (!enableGraphicsQueues || other.enableGraphicsQueues) &&
