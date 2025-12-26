@@ -370,6 +370,7 @@ int main()
     //////////////////////////////////////////////////////////////////////////////
     // Rendering
     //////////////////////////////////////////////////////////////////////////////
+    const uint32_t MAX_FRAMES_IN_FLIGHT = 2;
     auto queue = device.queue(queue_graphics);
 
     Image renderImage = device.createImage({
@@ -380,30 +381,11 @@ int main()
         },
         .usage = IMAGE_USAGE::STORAGE | IMAGE_USAGE::TRANSFER_SRC,
         .reqMemProps = MEMORY_PROPERTY::DEVICE_LOCAL,
-    });
-
-    window.recordPrePresentCommands([&](CommandBuffer cmdBuff, Image swapChainImage) {
-        cmdBuff.begin()
-            .barrier({
-                SYNC_SCOPE::RAYTRACING_WRITE / renderImage / SYNC_SCOPE::TRANSFER_SRC,
-                SYNC_SCOPE::NONE / swapChainImage / SYNC_SCOPE::TRANSFER_DST
-            })
-            .copyImage(renderImage, swapChainImage)
-            .barrier({
-                SYNC_SCOPE::TRANSFER_SRC / renderImage / SYNC_SCOPE::RAYTRACING_WRITE,
-                SYNC_SCOPE::TRANSFER_DST / swapChainImage / SYNC_SCOPE::PRESENT_SRC
-            })
-        .end();
-    });
-
-    const uint32_t MAX_FRAMES_IN_FLIGHT = 2;
+        });
 
     Buffer uniformBuffer[MAX_FRAMES_IN_FLIGHT];
     float* pMap[MAX_FRAMES_IN_FLIGHT];
     DescriptorSet descSet[MAX_FRAMES_IN_FLIGHT];
-    CommandBuffer renderCommandBuffers[MAX_FRAMES_IN_FLIGHT];
-    Semaphore onScImageWritable[MAX_FRAMES_IN_FLIGHT];
-    Fence fence[MAX_FRAMES_IN_FLIGHT];
 
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
@@ -416,23 +398,60 @@ int main()
 
         descSet[i] = pool(rtPipeline.descSetLayout(0));
         descSet[i].write({ tlas, renderImage, uniformBuffer[i] });
-
-        renderCommandBuffers[i] = device.newCommandBuffer(queue_graphics)
-        .begin()
-            .bindPipeline(rtPipeline)
-            .bindDescSets({ descSet[i] })
-            .traceRays(1200, 800)
-        .end();
-
-        onScImageWritable[i] = device.createSemaphore();
-        fence[i] = device.createFence(true);
     }
-    
+
+    auto& swapChainImages = window.swapChainImages();
+    size_t numSwapChainImages = (uint32_t)swapChainImages.size();
+
     auto initCommandBuffer = device.newCommandBuffer(queue_graphics)
     .begin(COMMAND_BUFFER_USAGE::ONE_TIME_SUBMIT)
         .barrier(SYNC_SCOPE::NONE / renderImage / SYNC_SCOPE::RAYTRACING_WRITE)
     .end()
     .submit();
+
+    std::vector<std::vector<CommandBuffer>> renderCommandBuffers(MAX_FRAMES_IN_FLIGHT);
+    
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    {
+        renderCommandBuffers[i].resize(numSwapChainImages);
+
+        for (uint32_t j = 0; j < numSwapChainImages; ++j)
+        {
+            renderCommandBuffers[i][j] = device.newCommandBuffer(queue_graphics)
+            .begin()
+                .bindPipeline(rtPipeline)
+                .bindDescSets({ descSet[i] })
+
+                .traceRays(1200, 800)
+                
+                .barrier({
+                    SYNC_SCOPE::RAYTRACING_WRITE / renderImage / SYNC_SCOPE::TRANSFER_SRC,
+                    SYNC_SCOPE::NONE / swapChainImages[j] / SYNC_SCOPE::TRANSFER_DST
+                })
+                
+                .copyImage(renderImage, swapChainImages[j])
+                
+                .barrier({
+                    SYNC_SCOPE::TRANSFER_SRC / renderImage / SYNC_SCOPE::RAYTRACING_WRITE,
+                    SYNC_SCOPE::TRANSFER_DST / swapChainImages[j] / SYNC_SCOPE::PRESENT_SRC
+                })
+            .end();
+        }
+    }
+
+    std::vector<Semaphore> imageAvailable(MAX_FRAMES_IN_FLIGHT);
+    std::vector<Fence> fence(MAX_FRAMES_IN_FLIGHT);
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    {
+        imageAvailable[i] = device.createSemaphore();
+        fence[i] = device.createFence(true);
+    }
+
+    std::vector<Semaphore> presentable(numSwapChainImages);
+    for (uint32_t i = 0; i < numSwapChainImages; ++i)
+    {
+        presentable[i] = device.createSemaphore();
+    }
 
     uint32_t currentFrame = 0;
     int count = 0;
@@ -449,8 +468,7 @@ int main()
 
         fence[currentFrame].wait(true);
 
-        auto [writeScImage, onScImagePresentable] 
-            = window.getNextPresentingContext(onScImageWritable[currentFrame]);
+        uint32_t imgIndex = window.acquireNextImageIndex(imageAvailable[currentFrame]);
 
         // Update uniform data with camera position, FOV, and orientation
         float* uniformData = pMap[currentFrame];
@@ -485,12 +503,10 @@ int main()
             uniformData[15] = 0.0f; // padding
         }
 
-        queue << onScImageWritable[currentFrame]//(PIPELINE_STAGE::TRANSFER)
-              / (renderCommandBuffers[currentFrame], writeScImage)
-              / onScImagePresentable
+        queue << imageAvailable[currentFrame] / renderCommandBuffers[currentFrame][imgIndex] / presentable[imgIndex]
             << fence[currentFrame];
 
-        window.present(queue);
+        window.present(queue, { presentable[imgIndex] }, imgIndex);
 
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
         count++;

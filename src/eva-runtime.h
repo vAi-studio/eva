@@ -10,12 +10,24 @@
 #include <tuple>
 #include <utility>
 #include <cstring>
-#include <functional>
 
 #define VULKAN_VERSION_1_3  // TODO: whether to use this or not depends on the system
 
 #include "eva-error.h"
 #include "eva-enums.h"
+
+// Forward declarations for Vulkan types (for external memory interop APIs)
+// These match the Vulkan definitions without requiring vulkan.h inclusion
+struct VkDevice_T;
+struct VkPhysicalDevice_T;
+struct VkBuffer_T;
+struct VkDeviceMemory_T;
+struct VkQueue_T;
+typedef VkDevice_T* VkDevice;
+typedef VkPhysicalDevice_T* VkPhysicalDevice;
+typedef VkBuffer_T* VkBuffer;
+typedef VkDeviceMemory_T* VkDeviceMemory;
+typedef VkQueue_T* VkQueue;
 
 
 #define EVA_ATTACHMENT_UNUSED              (~0U)
@@ -192,11 +204,13 @@ struct DeviceSettings {
 #ifdef EVA_ENABLE_RAYTRACING
     bool enableRaytracing;
 #endif
+    bool enableExternalMemory;  // Enable VK_KHR_external_memory for D3D11/DMABuf interop
     // bool operator==(const DeviceSettings&) const = default;
     bool operator<=(const DeviceSettings& other) const {
         return (!enableGraphicsQueues || other.enableGraphicsQueues) &&
                (!enableComputeQueues  || other.enableComputeQueues)  &&
-               (!enableTransferQueues || other.enableTransferQueues)
+               (!enableTransferQueues || other.enableTransferQueues) &&
+               (!enableExternalMemory || other.enableExternalMemory)
 #ifdef EVA_ENABLE_WINDOW
                && (!enableWindow      || other.enableWindow)
 #endif
@@ -248,6 +262,10 @@ class Device {
     VULKAN_CLASS_COMMON2(Device)
 
 public:
+    // Raw Vulkan handle accessors (for interop with external APIs)
+    VkDevice vkDevice() const;
+    VkPhysicalDevice vkPhysicalDevice() const;
+
     void reportGPUQueueFamilies() const;
     void reportAssignedQueues() const;    
 
@@ -259,7 +277,6 @@ public:
     CommandPool createCommandPool(QueueType type, COMMAND_POOL_CREATE flags=COMMAND_POOL_CREATE::NONE);
     CommandPool setDefalutCommandPool(QueueType type, CommandPool cmdPool);
     CommandBuffer newCommandBuffer(QueueType type, COMMAND_POOL_CREATE poolFlags=COMMAND_POOL_CREATE::NONE);
-    std::vector<CommandBuffer> newCommandBuffers(uint32_t count, QueueType type, COMMAND_POOL_CREATE poolFlags=COMMAND_POOL_CREATE::NONE);
     
     Fence createFence(bool signaled=false);
     Result waitFences(std::vector<Fence> fences, bool waitAll, uint64_t timeout=uint64_t(-1));
@@ -276,6 +293,17 @@ public:
     ComputePipeline createComputePipeline(const ComputePipelineCreateInfo& info);
 
     Buffer createBuffer(const BufferCreateInfo& info) ;
+
+    // Import external buffer for zero-copy interop (D3D11, CUDA, etc.)
+    // The caller is responsible for managing the lifetime of externalBuffer and externalMemory
+    Buffer importExternalBuffer(
+        VkBuffer externalBuffer,
+        VkDeviceMemory externalMemory,
+        uint64_t size,
+        BUFFER_USAGE usage,
+        MEMORY_PROPERTY memProps = MEMORY_PROPERTY::DEVICE_LOCAL
+    );
+
     Image createImage(const ImageCreateInfo& info);
     Sampler createSampler(const SamplerCreateInfo& info);
     DescriptorSetLayout createDescriptorSetLayout(DescriptorSetLayoutDesc desc); // call-by-value is ok because at least one copy is necessary for lvalue
@@ -307,6 +335,9 @@ public:
     uint32_t queueFamilyIndex() const;
 
     uint32_t index() const;
+
+    // Raw Vulkan queue handle (for interop with external APIs)
+    VkQueue vkQueue() const;
 
     float priority() const;
 
@@ -489,8 +520,8 @@ class Semaphore {
     VULKAN_CLASS_COMMON2(Semaphore)
 public:
 
-    SemaphoreStage operator()(PIPELINE_STAGE stage) const;
-
+    SemaphoreStage operator/(PIPELINE_STAGE stage) const;
+    
 };
 
 
@@ -524,7 +555,11 @@ public:
 class Buffer {
     VULKAN_CLASS_COMMON2(Buffer)
 public:
-    
+
+    // Raw Vulkan handle accessors (for interop with external APIs)
+    VkBuffer vkBuffer() const;
+    VkDeviceMemory vkMemory() const;
+
     uint8_t* map(
         uint64_t offset=0, 
         uint64_t size=EVA_WHOLE_SIZE
@@ -1002,7 +1037,6 @@ inline ShaderStage operator+(ShaderInput shader, ConstantID<ID, T> constant)
 struct ComputePipelineCreateInfo {
     ShaderStage csStage;
     std::optional<PipelineLayout> layout;
-    bool autoLayoutAllowAllStages = false;
 };
 
 
@@ -1416,13 +1450,15 @@ struct SemaphoreStage {
     const Semaphore sem;
     const PIPELINE_STAGE stage;
 
+    // constexpr SemaphoreStage() : sem{}, stage{} {} <---for why? 윈도우에서 에러
+
     SemaphoreStage(
         Semaphore sem, 
         PIPELINE_STAGE stage=PIPELINE_STAGE::ALL_COMMANDS) 
     : sem(sem), stage(stage) {}
 };
 
-inline SemaphoreStage Semaphore::operator()(PIPELINE_STAGE stage) const
+inline SemaphoreStage Semaphore::operator/(PIPELINE_STAGE stage) const
 {
     return {*this, stage};
 }
@@ -1626,15 +1662,6 @@ struct WindowCreateInfo {
     FORMAT swapChainImageFormat = FORMAT::B8G8R8A8_SRGB;
     COLOR_SPACE swapChainImageColorSpace = COLOR_SPACE::SRGB_NONLINEAR;
     PRESENT_MODE preferredPresentMode = PRESENT_MODE::FIFO;
-
-    /*
-    * prePresentCommandBuffer needs to be allocated:
-    * - prePresentCommandPool을 지정하였다면, 우선적으로 그것을 사용하여 생성
-    * - prePresentCommandPool이 지정되지 않았다면, device의 prePresentCommandPoolType 타입의 (디바이스에 내제된)기본 커맨드 풀을 사용하여 생성
-    */
-    CommandPool prePresentCommandPool;
-    QueueType prePresentCommandPoolType = queue_graphics; // must be compatible with the present queue family
-    COMMAND_POOL_CREATE prePresentCommandPoolFlags = COMMAND_POOL_CREATE::NONE;
 };
 
 
@@ -1642,25 +1669,17 @@ class Window {
     VULKAN_CLASS_COMMON2(Window)
 
 public:
+
     const std::vector<Image>& swapChainImages() const;
-
-    void recordPrePresentCommands(std::function<void(CommandBuffer, Image)> recordFunc);
-
-    uint32_t acquireNextImageIndex(Semaphore onNextScImageWritable) const;
+    uint32_t acquireNextImageIndex(Semaphore imageAvailableSemaphore) const;
+    Image acquireNextImage(Semaphore imageAvailableSemaphore) const;
     void present(Queue queue, std::vector<Semaphore> waitSemaphore, uint32_t imageIndex) const;
-
-    std::pair<CommandBuffer, Semaphore> getNextPresentingContext(Semaphore onNextScImageWritable) const;
-    void present(Queue queue) const;
+    void present(Queue queue, std::vector<Semaphore> waitSemaphore, Image image) const;
+    void present(Queue queue, std::vector<Semaphore> waitSemaphore) const;
 
     bool shouldClose() const;
     void pollEvents() const;
 
-    // Bring window to front and request user attention
-    void focus() const;
-
-    void setTitle(const char* title) const;
-
-    // Input callback setters
     void setMouseButtonCallback(void (*callback)(int button, int action, double xpos, double ypos));
     void setKeyCallback(void (*callback)(int key, int action, int mods));
     void setCursorPosCallback(void (*callback)(double xpos, double ypos));
@@ -1706,7 +1725,6 @@ struct RaytracingPipelineCreateInfo {
     std::vector<HitGroup> hitGroups;
     uint32_t maxRecursionDepth = 1;
     std::optional<PipelineLayout> layout;
-    bool autoLayoutAllowAllStages = false;
 };
 
 
