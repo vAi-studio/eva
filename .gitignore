@@ -14,3 +14,4 @@
 
 !samples/
 !samples/**
+!LINUX_CLANG_COMPATIBILITY.md

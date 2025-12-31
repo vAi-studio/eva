@@ -136,7 +136,20 @@ struct MemoryBarrier;
 struct BufferMemoryBarrier;
 struct ImageMemoryBarrier;
 
-struct CopyRegion;
+// TODO: Linux Clang 호환성 - CopyRegion은 std::vector 기본값에서 사용되므로 완전한 타입 필요
+struct CopyRegion {
+    uint64_t bufferOffset=0;
+    uint32_t bufferRowLength=0;
+    uint32_t bufferImageHeight=0;
+    uint32_t offsetX=0;
+    uint32_t offsetY=0;
+    uint32_t offsetZ=0;
+    uint32_t baseLayer=0;
+    uint32_t width=0;
+    uint32_t height=0;
+    uint32_t depth=0;
+    uint32_t layerCount=0;
+};
 struct WindowCreateInfo;
 
 
@@ -265,12 +278,8 @@ public:
     Result waitFences(std::vector<Fence> fences, bool waitAll, uint64_t timeout=uint64_t(-1));
     void resetFences(std::vector<Fence> fences);
     Semaphore createSemaphore();
-    template <int N> auto createSemaphores()
-    {
-        return [this]<std::size_t... I>(std::index_sequence<I...>) {
-            return std::make_tuple(((void)I, createSemaphore())...);
-        }(std::make_index_sequence<N>{});
-    }
+    // TODO: Linux Clang 호환성 - 템플릿 구현은 Semaphore 정의 뒤로 이동
+    template <int N> auto createSemaphores();
 
     ShaderModule createShaderModule(const ShaderModuleCreateInfo& info);
     ComputePipeline createComputePipeline(const ComputePipelineCreateInfo& info);
@@ -493,6 +502,15 @@ public:
 
 };
 
+// TODO: Linux Clang 호환성 - Device::createSemaphores 템플릿 구현 (Semaphore 정의 후)
+template <int N>
+auto Device::createSemaphores()
+{
+    return [this]<std::size_t... I>(std::index_sequence<I...>) {
+        return std::make_tuple(((void)I, createSemaphore())...);
+    }(std::make_index_sequence<N>{});
+}
+
 
 class ShaderModule {
     VULKAN_CLASS_COMMON2(ShaderModule)
@@ -616,15 +634,9 @@ public:
         uint32_t count
     );
 
+    // TODO: Linux Clang 호환성 - 템플릿 함수를 DescriptorSet 정의 뒤로 이동
     template<typename... Layouts>
-    auto operator()(Layouts... layouts) requires (std::is_same_v<Layouts, DescriptorSetLayout> && ...)
-    {
-        auto sets = (*this)(std::vector<DescriptorSetLayout>{ layouts... });
-
-        return [&]<std::size_t... I>(std::index_sequence<I...>) {
-            return std::make_tuple(sets[I]...);
-        }(std::index_sequence_for<Layouts...>{});
-    }
+    auto operator()(Layouts... layouts) requires (std::is_same_v<Layouts, DescriptorSetLayout> && ...);
 };
 
 
@@ -648,9 +660,20 @@ inline DescriptorSet DescriptorPool::operator()(DescriptorSetLayout layout)
     return (*this)(std::vector<DescriptorSetLayout>{layout})[0];
 }
 
-inline std::vector<DescriptorSet> DescriptorPool::operator()(DescriptorSetLayout layout, uint32_t count) 
+inline std::vector<DescriptorSet> DescriptorPool::operator()(DescriptorSetLayout layout, uint32_t count)
 {
     return (*this)(std::vector<DescriptorSetLayout>(count, layout));
+}
+
+// TODO: Linux Clang 호환성 - 템플릿 함수는 DescriptorSet 정의 후에 구현해야 함
+template<typename... Layouts>
+auto DescriptorPool::operator()(Layouts... layouts) requires (std::is_same_v<Layouts, DescriptorSetLayout> && ...)
+{
+    auto sets = (*this)(std::vector<DescriptorSetLayout>{ layouts... });
+
+    return [&]<std::size_t... I>(std::index_sequence<I...>) {
+        return std::make_tuple(sets[I]...);
+    }(std::index_sequence_for<Layouts...>{});
 }
 
 
@@ -663,6 +686,11 @@ struct BindingInfo {
     DESCRIPTOR_TYPE descriptorType;
     uint32_t descriptorCount;
     SHADER_STAGE stageFlags;
+
+    // TODO: Linux Clang 호환성 - libc++ try_emplace를 위해 생성자 추가
+    BindingInfo() = default;
+    BindingInfo(uint32_t b, DESCRIPTOR_TYPE d, uint32_t c, SHADER_STAGE s)
+        : binding(b), descriptorType(d), descriptorCount(c), stageFlags(s) {}
 
     BindingInfo& operator|=(BindingInfo&& other) {
         if (binding == other.binding 
@@ -833,20 +861,7 @@ inline std::vector<DescriptorSet> operator,(DescriptorSet lhs, DescriptorSet rhs
 
 
 
-struct CopyRegion {
-    uint64_t bufferOffset=0;
-    uint32_t bufferRowLength=0;
-    uint32_t bufferImageHeight=0;
-    uint32_t offsetX=0;
-    uint32_t offsetY=0;
-    uint32_t offsetZ=0;
-    uint32_t baseLayer=0;
-    uint32_t width=0; 
-    uint32_t height=0; 
-    uint32_t depth=0;
-    uint32_t layerCount=0;
-};
-
+// CopyRegion은 위로 이동됨 (Linux Clang 호환성)
 
 struct SpvBlob {
     std::shared_ptr<uint32_t[]> data;
@@ -878,7 +893,7 @@ struct ConstantID {
 // };
 
 
-template<int ID, class T>
+template<uint32_t ID, class T>  // TODO: Linux Clang 호환성 - int → uint32_t (ConstantID와 일치)
 inline auto constant_id(T v)
 {
     return ConstantID<ID, T>{v};
@@ -889,7 +904,7 @@ inline auto constant_id(T v)
 * If the specialization constant is of type boolean, size must be the byte size of VkBool32.
 * And in Vulkan, VkBool32 is defined as uint32_t.
 */
-template<int ID>
+template<uint32_t ID>  // TODO: Linux Clang 호환성 - int → uint32_t (ConstantID와 일치)
 inline auto constant_id(bool v)
 {
     return ConstantID<ID, uint32_t>{ v ? 1u : 0u };
@@ -981,8 +996,8 @@ struct ShaderStage {
     ShaderStage(ShaderType shader, SpecializationConstant&& spec ={})
     : shader(shader), specialization(std::move(spec)) {}
 
-    template<int ID, typename T>
-    ShaderStage operator+(ConstantID<ID, T> constant) && 
+    template<uint32_t ID, typename T>  // TODO: Linux Clang 호환성 - int → uint32_t (ConstantID와 일치)
+    ShaderStage operator+(ConstantID<ID, T> constant) &&
     {
         specialization.addConstant(constant);
         return std::move(*this);
@@ -992,8 +1007,8 @@ struct ShaderStage {
 };
 
 
-template<int ID, typename T>
-inline ShaderStage operator+(ShaderInput shader, ConstantID<ID, T> constant) 
+template<uint32_t ID, typename T>  // TODO: Linux Clang 호환성 - int → uint32_t (ConstantID와 일치)
+inline ShaderStage operator+(ShaderInput shader, ConstantID<ID, T> constant)
 {
     return ShaderStage(shader) + constant;
 }

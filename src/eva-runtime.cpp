@@ -218,8 +218,8 @@ static std::pair<VkMemoryAllocateInfo, VkMemoryPropertyFlags> getMemoryAllocInfo
         vkGetBufferMemoryRequirements(device, resource, &memRequirements);  // It should be removed for performance!
     else if constexpr (std::is_same_v<VkResource, VkImage>)
         vkGetImageMemoryRequirements(device, resource, &memRequirements);
-    else 
-        static_assert(false, "Invalid VkResource type");
+    else
+        static_assert(sizeof(VkResource) == 0, "Invalid VkResource type"); // TODO: Linux Clang 호환성 - dependent false
 
     /*
     In Vulkan specification, the memoryTypes array is ordered by the following rules:
@@ -1056,14 +1056,14 @@ Device Runtime::createDevice(const DeviceSettings& settings)
 
         priorities[qfIndex].resize(qfProps[qfIndex].queueCount, 0.5f);
 
-        queueFamilyInfos.emplace_back(
-            VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-            nullptr,
-            VkDeviceQueueCreateFlags(0),
-            qfIndex,
-            qfProps[qfIndex].queueCount,
-            priorities[qfIndex].data()     // TODO: Set queue priorities (How to set accross different types but same family?)
-        );
+        queueFamilyInfos.push_back(VkDeviceQueueCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = VkDeviceQueueCreateFlags(0),
+            .queueFamilyIndex = qfIndex,
+            .queueCount = qfProps[qfIndex].queueCount,
+            .pQueuePriorities = priorities[qfIndex].data()     // TODO: Set queue priorities (How to set accross different types but same family?)
+        }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
     }
 
     PNextChain chain;
@@ -1397,16 +1397,16 @@ Queue Queue::submit(std::vector<SubmissionBatchInfo>&& batches, std::optional<Fe
         info.waitSemaphoreInfoCount = (uint32_t) inWaitSems.size();
         info.pWaitSemaphoreInfos = waitSems.data() + waitSemOffset;
 
-        for (auto& inWaitSem : inWaitSems) 
+        for (auto& inWaitSem : inWaitSems)
         {
-            waitSems.emplace_back(
-                VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-                nullptr,
-                inWaitSem.sem.impl().vkSemaphore,
-                0,
-                (VkPipelineStageFlags2)(uint64_t)inWaitSem.stage,
-                0
-            );
+            waitSems.push_back(VkSemaphoreSubmitInfo{
+                .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+                .pNext = nullptr,
+                .semaphore = inWaitSem.sem.impl().vkSemaphore,
+                .value = 0,
+                .stageMask = (VkPipelineStageFlags2)(uint64_t)inWaitSem.stage,
+                .deviceIndex = 0
+            }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
         }
         waitSemOffset += info.waitSemaphoreInfoCount;
 
@@ -1417,27 +1417,27 @@ Queue Queue::submit(std::vector<SubmissionBatchInfo>&& batches, std::optional<Fe
             // EVA_ASSERT(inCmdBuffer.queueFamilyIndex() == impl().qfIndex); // VUID-vkQueueSubmit2-pCommandBuffers-00074
             EVA_ASSERT(_type == inCmdBuffer.type()); // VUID-vkQueueSubmit2-pCommandBuffers-00074
             inCmdBuffer.impl().lastSubmittedQueue = *this;
-            cmdBuffers.emplace_back(
-                VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
-                nullptr,
-                inCmdBuffer.impl().vkCmdBuffer,
-                0
-            );
+            cmdBuffers.push_back(VkCommandBufferSubmitInfo{
+                .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+                .pNext = nullptr,
+                .commandBuffer = inCmdBuffer.impl().vkCmdBuffer,
+                .deviceMask = 0
+            }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
         }
         cmdBufferOffset += info.commandBufferInfoCount;
 
         info.signalSemaphoreInfoCount = (uint32_t) inSignalSems.size();
         info.pSignalSemaphoreInfos = signalSems.data() + signalSemOffset;
-        for (auto& inSignalSem : inSignalSems) 
+        for (auto& inSignalSem : inSignalSems)
         {
-            signalSems.emplace_back(
-                VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-                nullptr,
-                inSignalSem.sem.impl().vkSemaphore,
-                0,
-                (VkPipelineStageFlags2)(uint64_t)inSignalSem.stage,
-                0
-            );
+            signalSems.push_back(VkSemaphoreSubmitInfo{
+                .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+                .pNext = nullptr,
+                .semaphore = inSignalSem.sem.impl().vkSemaphore,
+                .value = 0,
+                .stageMask = (VkPipelineStageFlags2)(uint64_t)inSignalSem.stage,
+                .deviceIndex = 0
+            }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
         }
         signalSemOffset += info.signalSemaphoreInfoCount;
     }
@@ -1789,32 +1789,32 @@ CommandBuffer CommandBuffer::barrier(
                 else EVA_ASSERT(barrier.opType == OwnershipTransferOpType::none);
             }
             
-            if constexpr (std::is_same_v<T, MemoryBarrier>) 
+            if constexpr (std::is_same_v<T, MemoryBarrier>)
             {
-                memoryBarriers.emplace_back(
-                    VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-                    nullptr,
-                    (VkPipelineStageFlags2) barrier.srcMask.scope.stage,
-                    (VkAccessFlags2) barrier.srcMask.scope.access,
-                    (VkPipelineStageFlags2) barrier.dstMask.scope.stage,
-                    (VkAccessFlags2) barrier.dstMask.scope.access
-                );
+                memoryBarriers.push_back(VkMemoryBarrier2{
+                    .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                    .pNext = nullptr,
+                    .srcStageMask = (VkPipelineStageFlags2) barrier.srcMask.scope.stage,
+                    .srcAccessMask = (VkAccessFlags2) barrier.srcMask.scope.access,
+                    .dstStageMask = (VkPipelineStageFlags2) barrier.dstMask.scope.stage,
+                    .dstAccessMask = (VkAccessFlags2) barrier.dstMask.scope.access
+                }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
             }
-            else if constexpr (std::is_same_v<T, BufferMemoryBarrier>) 
+            else if constexpr (std::is_same_v<T, BufferMemoryBarrier>)
             {
-                bufferBarriers.emplace_back(
-                    VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-                    nullptr,
-                    (VkPipelineStageFlags2) barrier.srcMask.scope.stage,
-                    (VkAccessFlags2) barrier.srcMask.scope.access,
-                    (VkPipelineStageFlags2) barrier.dstMask.scope.stage,
-                    (VkAccessFlags2) barrier.dstMask.scope.access,
-                    srcQueueFamilyIndex,
-                    dstQueueFamilyIndex,
-                    barrier.buffer.buffer.impl().vkBuffer,
-                    barrier.buffer.offset, 
-                    barrier.buffer.size
-                );
+                bufferBarriers.push_back(VkBufferMemoryBarrier2{
+                    .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                    .pNext = nullptr,
+                    .srcStageMask = (VkPipelineStageFlags2) barrier.srcMask.scope.stage,
+                    .srcAccessMask = (VkAccessFlags2) barrier.srcMask.scope.access,
+                    .dstStageMask = (VkPipelineStageFlags2) barrier.dstMask.scope.stage,
+                    .dstAccessMask = (VkAccessFlags2) barrier.dstMask.scope.access,
+                    .srcQueueFamilyIndex = srcQueueFamilyIndex,
+                    .dstQueueFamilyIndex = dstQueueFamilyIndex,
+                    .buffer = barrier.buffer.buffer.impl().vkBuffer,
+                    .offset = barrier.buffer.offset,
+                    .size = barrier.buffer.size
+                }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
             }
             else if constexpr (std::is_same_v<T, ImageMemoryBarrier>) 
             {
@@ -1859,26 +1859,24 @@ CommandBuffer CommandBuffer::barrier(
                     }
                 }
 
-                imageBarriers.emplace_back(
-                    VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                    nullptr,
-                    (VkPipelineStageFlags2) barrier.srcMask.scope.stage,
-                    (VkAccessFlags2) barrier.srcMask.scope.access,
-                    (VkPipelineStageFlags2) barrier.dstMask.scope.stage,
-                    (VkAccessFlags2) barrier.dstMask.scope.access,
-                    (VkImageLayout)(uint32_t) barrier.oldLayout,
-                    (VkImageLayout)(uint32_t) barrier.newLayout,
-                    // (VkImageLayout)(uint32_t) barrier.image.impl().currentLayout,
-                    // (VkImageLayout)(uint32_t) (barrier.newLayout == IMAGE_LAYOUT::UNDEFINED ? barrier.image.impl().currentLayout : barrier.newLayout),
-                    srcQueueFamilyIndex,
-                    dstQueueFamilyIndex,
-                    barrier.image.impl().vkImage,
-                    VkImageSubresourceRange{
+                imageBarriers.push_back(VkImageMemoryBarrier2{
+                    .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                    .pNext = nullptr,
+                    .srcStageMask = (VkPipelineStageFlags2) barrier.srcMask.scope.stage,
+                    .srcAccessMask = (VkAccessFlags2) barrier.srcMask.scope.access,
+                    .dstStageMask = (VkPipelineStageFlags2) barrier.dstMask.scope.stage,
+                    .dstAccessMask = (VkAccessFlags2) barrier.dstMask.scope.access,
+                    .oldLayout = (VkImageLayout)(uint32_t) barrier.oldLayout,
+                    .newLayout = (VkImageLayout)(uint32_t) barrier.newLayout,
+                    .srcQueueFamilyIndex = srcQueueFamilyIndex,
+                    .dstQueueFamilyIndex = dstQueueFamilyIndex,
+                    .image = barrier.image.impl().vkImage,
+                    .subresourceRange = VkImageSubresourceRange{
                         .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,    // TODO: support depth/stencil
                         .levelCount = VK_REMAINING_MIP_LEVELS,      // TODO: support level control
                         .layerCount = VK_REMAINING_ARRAY_LAYERS,    // TODO: support layer control
                     }
-                );
+                }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
 
                 // barrier.image.impl().currentLayout = barrier.newLayout; // update current layout
             }
@@ -1930,31 +1928,31 @@ CommandBuffer CommandBuffer::barrier(
                 else EVA_ASSERT(barrier.opType == OwnershipTransferOpType::none);
             }
             
-            if constexpr (std::is_same_v<T, MemoryBarrier>) 
+            if constexpr (std::is_same_v<T, MemoryBarrier>)
             {
                 srcStageMask |= (VkPipelineStageFlags) barrier.srcMask.stage;
                 dstStageMask |= (VkPipelineStageFlags) barrier.dstMask.stage;
-                memoryBarriers.emplace_back(
-                    VK_STRUCTURE_TYPE_MEMORY_BARRIER,
-                    nullptr,
-                    (VkAccessFlags) barrier.srcMask.access,
-                    (VkAccessFlags) barrier.dstMask.access
-                );
+                memoryBarriers.push_back(VkMemoryBarrier{
+                    .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                    .pNext = nullptr,
+                    .srcAccessMask = (VkAccessFlags) barrier.srcMask.access,
+                    .dstAccessMask = (VkAccessFlags) barrier.dstMask.access
+                }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
             }
             else if constexpr (std::is_same_v<T, BufferMemoryBarrier>) {
                 srcStageMask |= (VkPipelineStageFlags) barrier.srcMask.stage;
                 dstStageMask |= (VkPipelineStageFlags) barrier.dstMask.stage;
-                bufferBarriers.emplace_back(
-                    VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-                    nullptr,
-                    (VkAccessFlags) barrier.srcMask.access,
-                    (VkAccessFlags) barrier.dstMask.access,
-                    srcQueueFamilyIndex,
-                    dstQueueFamilyIndex,
-                    barrier.buffer.impl().vkBuffer,
-                    barrier.offset, 
-                    barrier.size
-                );
+                bufferBarriers.push_back(VkBufferMemoryBarrier{
+                    .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                    .pNext = nullptr,
+                    .srcAccessMask = (VkAccessFlags) barrier.srcMask.access,
+                    .dstAccessMask = (VkAccessFlags) barrier.dstMask.access,
+                    .srcQueueFamilyIndex = srcQueueFamilyIndex,
+                    .dstQueueFamilyIndex = dstQueueFamilyIndex,
+                    .buffer = barrier.buffer.impl().vkBuffer,
+                    .offset = barrier.offset,
+                    .size = barrier.size
+                }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
             }
             else if constexpr (std::is_same_v<T, ImageMemoryBarrier>) {
                 // TODO: Support image & image barrier
@@ -2946,7 +2944,8 @@ void Buffer::unmap()
     impl().mappedSize = 0;
 }
 
-inline uint64_t Buffer::size() const
+// TODO: Linux 호환성 - inline 제거 (GCC Release 빌드에서 링킹 에러 방지)
+uint64_t Buffer::size() const
 {
     return impl().size;
 }
@@ -3111,15 +3110,15 @@ DescriptorSetLayout Device::createDescriptorSetLayout(DescriptorSetLayoutDesc de
 
     for (auto& [_, bindingInfo] : desc.bindings) 
     {
-        vkBindings.emplace_back(
-            bindingInfo.binding,
-            (VkDescriptorType)(uint32_t)bindingInfo.descriptorType,
-            bindingInfo.descriptorCount,
-            bindingInfo.stageFlags == SHADER_STAGE::NONE ? 
-                VK_SHADER_STAGE_ALL : 
+        vkBindings.push_back(VkDescriptorSetLayoutBinding{
+            .binding = bindingInfo.binding,
+            .descriptorType = (VkDescriptorType)(uint32_t)bindingInfo.descriptorType,
+            .descriptorCount = bindingInfo.descriptorCount,
+            .stageFlags = bindingInfo.stageFlags == SHADER_STAGE::NONE ?
+                VK_SHADER_STAGE_ALL :
                 (VkShaderStageFlags)(uint32_t)bindingInfo.stageFlags,
-            nullptr // TODO: support immutable samplers
-        );
+            .pImmutableSamplers = nullptr
+        }); // TODO: Clang 호환성 - emplace_back → push_back + designated initializer
     }
 
     auto vkHandle = create<VkDescriptorSetLayout>(impl().vkDevice, {
@@ -3244,15 +3243,16 @@ std::vector<DescriptorSet> DescriptorPool::operator()(std::vector<DescriptorSetL
         .pSetLayouts = vkSetLayouts.data(),
     });
 
-    std::vector<DescriptorSet> descSets(setLayouts.size());
-    for (uint32_t i = 0; i < setLayouts.size(); ++i) 
+    std::vector<DescriptorSet> descSets;
+    descSets.reserve(setLayouts.size()); // TODO: Linux Clang 호환성 - vector(size) → reserve + push_back
+    for (uint32_t i = 0; i < setLayouts.size(); ++i)
     {
         auto pImpl = new DescriptorSet::Impl(
-            impl().vkDevice, 
-            vkDescSets[i], 
+            impl().vkDevice,
+            vkDescSets[i],
             setLayouts[i]);
-            
-        descSets[i] = impl().descSets.emplace_back(new DescriptorSet::Impl*(pImpl));
+
+        descSets.push_back(impl().descSets.emplace_back(new DescriptorSet::Impl*(pImpl)));
     }
 
     return descSets;
@@ -3341,11 +3341,11 @@ DescriptorSet DescriptorSet::write(
             {
                 // bufferInfos.push_back(std::get<BufferDescriptor>(descriptors[consumedDescriptors + i]).descInfo());
                 auto& desc = std::get<BufferDescriptor>(descriptors[consumedDescriptors + i]);
-                bufferInfos.emplace_back(
-                    desc.buffer.impl().vkBuffer,
-                    desc.offset,
-                    desc.size
-                );
+                bufferInfos.push_back(VkDescriptorBufferInfo{
+                    .buffer = desc.buffer.impl().vkBuffer,
+                    .offset = desc.offset,
+                    .range = desc.size
+                }); // TODO: Clang 호환성 - emplace_back → push_back + designated initializer
             }
         }
         
@@ -3361,12 +3361,12 @@ DescriptorSet DescriptorSet::write(
             {
                 // imageInfos.push_back(std::get<ImageDescriptor>(descriptors[consumedDescriptors + i]).descInfo());
                 auto& desc = std::get<ImageDescriptor>(descriptors[consumedDescriptors + i]);
-                imageInfos.emplace_back(
-                    desc.sampler ? desc.sampler->impl().vkSampler : VK_NULL_HANDLE,
-                    desc.imageView ? desc.imageView->impl().vkImageView : VK_NULL_HANDLE,
-                    (VkImageLayout)(uint32_t) (desc.imageLayout != IMAGE_LAYOUT::MAX_ENUM 
+                imageInfos.push_back(VkDescriptorImageInfo{
+                    .sampler = desc.sampler ? desc.sampler->impl().vkSampler : VK_NULL_HANDLE,
+                    .imageView = desc.imageView ? desc.imageView->impl().vkImageView : VK_NULL_HANDLE,
+                    .imageLayout = (VkImageLayout)(uint32_t) (desc.imageLayout != IMAGE_LAYOUT::MAX_ENUM
                                                 ? desc.imageLayout : defaultLayout)
-                );
+                }); // TODO: Clang 호환성 - emplace_back → push_back + designated initializer
             }
         }
         
