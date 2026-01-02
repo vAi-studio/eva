@@ -249,7 +249,7 @@ class Device {
 
 public:
     void reportGPUQueueFamilies() const;
-    void reportAssignedQueues() const;    
+    void reportAssignedQueues() const;
 
     uint32_t queueCount(QueueType type) const;
     bool supportPresent(QueueType type) const;
