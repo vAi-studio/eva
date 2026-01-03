@@ -1,0 +1,27 @@
+#version 450
+layout(local_size_x = 32, local_size_y = 32) in;
+layout(set = 0, binding = 0) buffer OutBuffer { float C[]; };
+layout(set = 0, binding = 1) buffer InBuffer { float A[]; };
+layout(set = 0, binding = 2) buffer Weight { float B[]; };
+
+// C(MxN) = A(MxK)*B(NxK)^t
+layout(push_constant) uniform PushConstants {
+    int M;  // # of batchs
+    int K;  // # of inputs
+    int N;  // # of outputs
+};
+
+void main()
+{
+    int n = int(gl_GlobalInvocationID.x);
+    int m = int(gl_GlobalInvocationID.y);
+
+    if (m >= M || n >= N)
+    	return;
+
+    float sum = 0.0;
+    for (int k = 0; k < K; ++k)
+        sum += A[m * K + k] * B[n * K + k];
+
+    C[m * N + n] = sum;
+}

@@ -240,10 +240,11 @@ endfunction()
 ################################################################################
 # Samples
 ################################################################################
-if(EVA_BUILD_SAMPLES AND 
-EVA_ENABLE_RAYTRACING AND 
-EVA_ENABLE_WINDOW)
+if(EVA_BUILD_SAMPLES)
     message(STATUS "[EVA] Building sample projects...")
-    add_subdirectory(samples/raytracing)
+    add_subdirectory(samples/matmul)
+    if(EVA_ENABLE_RAYTRACING AND EVA_ENABLE_WINDOW)
+        add_subdirectory(samples/raytracing)
+    endif()
     message(STATUS "[EVA] Sample projects build configuration completed.")
 endif()
