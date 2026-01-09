@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <map>
+#include <array>
 #include <string>
 #include <variant>
 #include <optional>
@@ -385,7 +386,7 @@ public:
     );
 
     CommandBuffer bindDescSets(
-        std::vector<DescriptorSet> descSets, 
+        std::vector<DescriptorSet> descSets,
         uint32_t firstSet=0
     );
 
@@ -1041,6 +1042,9 @@ struct ComputePipelineCreateInfo {
     ShaderStage csStage;
     std::optional<PipelineLayout> layout;
     bool autoLayoutAllowAllStages = false;
+    // For coopmat2 shaders: provide workgroup size to skip SPIRV-Reflect
+    // When both layout AND workgroupSize are provided, reflection is skipped entirely
+    std::optional<std::array<uint32_t, 3>> workgroupSize;  // {x, y, z}
 };
 
 

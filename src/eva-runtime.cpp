@@ -1196,6 +1196,14 @@ Device Runtime::createDevice(const DeviceSettings& settings)
                     .cooperativeMatrixBlockLoads = VK_TRUE,
                 });
 
+                // @chay116 2026/01/06 - tensorLayoutNV requires bufferDeviceAddress
+                // This is required for tensor addressing operations (coopMatLoadTensorNV)
+                // llama.cpp also requires this for coopmat2: vk12_features.bufferDeviceAddress
+                chain.add(VkPhysicalDeviceBufferDeviceAddressFeatures{
+                    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
+                    .bufferDeviceAddress = VK_TRUE,
+                });
+
                 // Set global flag for runtime query
                 eva::gCoopMat2Supported = true;
             }
@@ -1277,6 +1285,23 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         pImpl->rtProps.minAccelerationStructureScratchOffsetAlignment = accelStructProps.minAccelerationStructureScratchOffsetAlignment;
     }
 #endif
+
+    // @chay116 2026/01/07 - Load vkGetBufferDeviceAddress for coopmat2 tensor addressing
+    // This is needed for SHADER_DEVICE_ADDRESS buffers used with coopMatLoadTensorNV
+    // Note: In Vulkan 1.2+, bufferDeviceAddress is a core feature (no KHR suffix)
+    if (coopmat2_supported && vkGetBufferDeviceAddressKHR_ == nullptr)
+    {
+        // Try core Vulkan 1.2 version first
+        vkGetBufferDeviceAddressKHR_ = (PFN_vkGetBufferDeviceAddressKHR)vkGetDeviceProcAddr(vkDevice, "vkGetBufferDeviceAddress");
+        // Fallback to KHR version if core not available
+        if (vkGetBufferDeviceAddressKHR_ == nullptr)
+            vkGetBufferDeviceAddressKHR_ = (PFN_vkGetBufferDeviceAddressKHR)vkGetDeviceProcAddr(vkDevice, "vkGetBufferDeviceAddressKHR");
+
+        if (vkGetBufferDeviceAddressKHR_)
+            printf("[EVA] vkGetBufferDeviceAddress loaded successfully!\n");
+        else
+            printf("[EVA] ERROR: Failed to load vkGetBufferDeviceAddress!\n");
+    }
 
     return impl().devices.emplace_back(new Device::Impl*(pImpl));
 }
@@ -2578,51 +2603,64 @@ size_t std::hash<eva::ShaderStage>::operator()(const eva::ShaderStage& stage) co
 /////////////////////////////////////////////////////////////////////////////////////////
 ComputePipeline Device::createComputePipeline(const ComputePipelineCreateInfo& info)
 {
-    ShaderModule csModule;
-    // const bool useReflect = !info.layout.has_value(); 
-    const bool useReflect = true; // force reflection for workgroup size extraction
+    // Skip SPIRV-Reflect entirely if both layout AND workgroupSize are provided
+    // This is required for coopmat2 shaders which SPIRV-Reflect cannot parse
+    const bool skipReflect = info.layout.has_value() && info.workgroupSize.has_value();
+    const bool useReflect = !skipReflect;
 
+    ShaderModule csModule;
     bool createTempModule = false;
 
-    if (auto* mod = std::get_if<ShaderModule>(&*info.csStage.shader)) 
+    if (auto* mod = std::get_if<ShaderModule>(&*info.csStage.shader))
     {
         csModule = *mod;
-    } 
+    }
     else
     {
-        csModule = createShaderModule({ 
-            .stage = SHADER_STAGE::COMPUTE, 
-            .spv = std::get<SpvBlob>(*info.csStage.shader), 
-            .withSpirvReflect = useReflect, 
+        csModule = createShaderModule({
+            .stage = SHADER_STAGE::COMPUTE,
+            .spv = std::get<SpvBlob>(*info.csStage.shader),
+            .withSpirvReflect = useReflect,
         });
         createTempModule = true;
     }
 
-    EVA_ASSERT(csModule.hasReflect());
-
-    auto [sizeX, sizeY, sizeZ] = extractWorkGroupSize(csModule.impl().pModule);
-
+    uint32_t sizeX, sizeY, sizeZ;
     PipelineLayout layout;
-    if (info.layout.has_value()) 
-    {
+
+    if (skipReflect) {
+        // Use provided workgroup size and layout (coopmat2 path)
+        auto& wgSize = info.workgroupSize.value();
+        sizeX = wgSize[0];
+        sizeY = wgSize[1];
+        sizeZ = wgSize[2];
         layout = info.layout.value();
-    } 
-    else 
-    {
-        auto layoutDesc = csModule.extractPipelineLayoutDesc();
-        if (info.autoLayoutAllowAllStages) 
+    } else {
+        // Use SPIRV-Reflect for workgroup size and optionally layout
+        EVA_ASSERT(csModule.hasReflect());
+        std::tie(sizeX, sizeY, sizeZ) = extractWorkGroupSize(csModule.impl().pModule);
+
+        if (info.layout.has_value())
         {
-            for (auto& [setId, setLayout] : layoutDesc.setLayouts) 
-                for (auto& [bindId, binding] : setLayout.bindings) 
-                    binding.stageFlags = SHADER_STAGE::ALL;
-            if (layoutDesc.pushConstant)
-                layoutDesc.pushConstant->stageFlags = SHADER_STAGE::ALL;
+            layout = info.layout.value();
         }
-        layout = createPipelineLayout(std::move(layoutDesc));
+        else
+        {
+            auto layoutDesc = csModule.extractPipelineLayoutDesc();
+            if (info.autoLayoutAllowAllStages)
+            {
+                for (auto& [setId, setLayout] : layoutDesc.setLayouts)
+                    for (auto& [bindId, binding] : setLayout.bindings)
+                        binding.stageFlags = SHADER_STAGE::ALL;
+                if (layoutDesc.pushConstant)
+                    layoutDesc.pushConstant->stageFlags = SHADER_STAGE::ALL;
+            }
+            layout = createPipelineLayout(std::move(layoutDesc));
+        }
     }
 
     const auto& spec = info.csStage.specialization;
-    
+
     VkPipelineShaderStageCreateInfo stageInfo = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .stage = (VkShaderStageFlagBits)(uint32_t) csModule.impl().stage,
@@ -2979,6 +3017,13 @@ Buffer Device::createBuffer(const BufferCreateInfo& info)
 
     if ((uint32_t)info.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
     {
+        // @chay116: Ensure function pointer is loaded (coopmat2 or raytracing)
+        if (vkGetBufferDeviceAddressKHR_ == nullptr)
+        {
+            fprintf(stderr, "[EVA ERROR] vkGetBufferDeviceAddressKHR_ is null! "
+                    "SHADER_DEVICE_ADDRESS requires coopmat2 or raytracing support.\n");
+            EVA_ASSERT(false);
+        }
         VkBufferDeviceAddressInfo addressInfo{
             .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
             .buffer = vkHandle
