@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(raytracing)
+project(sample-raytracing)
 
 add_executable(${PROJECT_NAME}
     # client code
@@ -20,11 +20,11 @@ add_executable(${PROJECT_NAME}
 )
 
 # Auto-detect and compile shaders
-eva_auto_compile_shaders(${PROJECT_NAME} ${CMAKE_CURRENT_BINARY_DIR}/shaders)
+eva_auto_compile_shaders(${PROJECT_NAME} ${CMAKE_CURRENT_BINARY_DIR}/shaders/raytracing)
 
 add_definitions(
     -DPROJECT_CURRENT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
-    -DSHADER_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}/shaders"
+    -DSHADER_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}/shaders/raytracing"
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
