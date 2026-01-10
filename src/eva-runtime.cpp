@@ -887,7 +887,8 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     auto qfProps = arrayFrom(vkGetPhysicalDeviceQueueFamilyProperties, pd);
     
     std::vector<const char*> reqExtentions = {
-        VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME
+        VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME,
+        VK_EXT_ROBUSTNESS_2_EXTENSION_NAME
     };
 
 #ifdef EVA_ENABLE_WINDOW
@@ -1081,6 +1082,11 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT,
             .shaderBufferFloat32AtomicAdd = VK_TRUE,
             //.shaderSharedFloat32AtomicAdd = VK_TRUE,
+        });
+
+        chain.add(VkPhysicalDeviceRobustness2FeaturesEXT{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
+            .nullDescriptor = VK_TRUE,
         });
 
 #ifdef EVA_ENABLE_RAYTRACING
@@ -3341,11 +3347,19 @@ DescriptorSet DescriptorSet::write(
             {
                 // bufferInfos.push_back(std::get<BufferDescriptor>(descriptors[consumedDescriptors + i]).descInfo());
                 auto& desc = std::get<BufferDescriptor>(descriptors[consumedDescriptors + i]);
+                
+                /*
+                If the nullDescriptor feature is enabled, the buffer, acceleration structure, imageView, or
+                bufferView can be VK_NULL_HANDLE. Loads from a null descriptor return zero values and stores
+                and atomics to a null descriptor are discarded. A null acceleration structure descriptor results in
+                the miss shader being invoked.
+                */
                 bufferInfos.emplace_back(
-                    desc.buffer.impl().vkBuffer,
+                    desc.buffer ? desc.buffer.impl().vkBuffer : VK_NULL_HANDLE,
                     desc.offset,
                     desc.size
                 );
+                
             }
         }
         
@@ -3383,7 +3397,7 @@ DescriptorSet DescriptorSet::write(
             for (uint32_t i = 0; i < consecutiveDescCount; ++i)
             {
                 auto& as = std::get<AccelerationStructure>(descriptors[consumedDescriptors + i]);
-                asArray.push_back(as.impl().vkAccelStruct);
+                asArray.push_back(as ? as.impl().vkAccelStruct : VK_NULL_HANDLE);
             }
         }
 #endif
