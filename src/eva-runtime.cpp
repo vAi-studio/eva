@@ -736,6 +736,24 @@ struct AccelerationStructure::Impl {
 #endif
 
 
+struct QueryPool::Impl {
+    VkDevice vkDevice;
+    VkQueryPool vkQueryPool;
+    uint32_t queryCount;
+    float timestampPeriod;  // nanoseconds per tick
+
+    Impl(VkDevice vkDevice, VkQueryPool vkQueryPool, uint32_t queryCount, float timestampPeriod)
+    : vkDevice(vkDevice)
+    , vkQueryPool(vkQueryPool)
+    , queryCount(queryCount)
+    , timestampPeriod(timestampPeriod)
+    {}
+
+    ~Impl() {
+        vkDestroyQueryPool(vkDevice, vkQueryPool, nullptr);
+    }
+};
+
 
 /////////////////////////////////////////////////////////////////////////////////////////
 // Runtime
@@ -2202,6 +2220,26 @@ CommandBuffer CommandBuffer::dispatch(uint32_t groupCountX, uint32_t groupCountY
     return *this;
 }
 
+
+CommandBuffer CommandBuffer::resetQueryPool(QueryPool pool, uint32_t firstQuery, uint32_t queryCount)
+{
+    if (queryCount == 0) queryCount = pool.queryCount() - firstQuery;
+    vkCmdResetQueryPool(impl().vkCmdBuffer, pool.impl().vkQueryPool, firstQuery, queryCount);
+    return *this;
+}
+
+
+CommandBuffer CommandBuffer::writeTimestamp(PIPELINE_STAGE stage, QueryPool pool, uint32_t query)
+{
+    vkCmdWriteTimestamp(
+        impl().vkCmdBuffer,
+        (VkPipelineStageFlagBits)(uint64_t)stage,
+        pool.impl().vkQueryPool,
+        query);
+    return *this;
+}
+
+
 #ifdef EVA_ENABLE_RAYTRACING
 CommandBuffer CommandBuffer::traceRays(
     ShaderBindingTable hitGroupSbt, uint32_t width, uint32_t height, uint32_t depth)
@@ -3236,6 +3274,87 @@ DescriptorPool Device::createDescriptorPool(const DescriptorPoolCreateInfo& info
 
     return *impl().descPools.insert(new DescriptorPool::Impl*(pImpl)).first;
 }
+
+
+QueryPool Device::createQueryPool(uint32_t queryCount)
+{
+    VkQueryPoolCreateInfo createInfo = {
+        .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+        .queryType = VK_QUERY_TYPE_TIMESTAMP,
+        .queryCount = queryCount,
+    };
+
+    VkQueryPool vkQueryPool;
+    ASSERT_SUCCESS(vkCreateQueryPool(impl().vkDevice, &createInfo, nullptr, &vkQueryPool));
+
+    // Get timestamp period from physical device
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(impl().vkPhysicalDevice, &props);
+
+    auto pImpl = new QueryPool::Impl(
+        impl().vkDevice,
+        vkQueryPool,
+        queryCount,
+        props.limits.timestampPeriod);
+
+    // Note: QueryPool is not tracked in Device::Impl sets for simplicity
+    // The caller is responsible for destroying it
+    return QueryPool(new QueryPool::Impl*(pImpl));
+}
+
+
+bool Device::supportsTimestampQueries() const
+{
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(impl().vkPhysicalDevice, &props);
+    return props.limits.timestampComputeAndGraphics == VK_TRUE;
+}
+
+
+std::vector<uint64_t> QueryPool::getResults(uint32_t firstQuery, uint32_t queryCount)
+{
+    if (queryCount == 0) queryCount = impl().queryCount - firstQuery;
+
+    std::vector<uint64_t> results(queryCount);
+    vkGetQueryPoolResults(
+        impl().vkDevice,
+        impl().vkQueryPool,
+        firstQuery,
+        queryCount,
+        queryCount * sizeof(uint64_t),
+        results.data(),
+        sizeof(uint64_t),
+        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT
+    );
+    return results;
+}
+
+
+double QueryPool::getElapsedMs(uint32_t startQuery, uint32_t endQuery)
+{
+    auto results = getResults(startQuery, endQuery - startQuery + 1);
+    if (results.size() < 2) return 0.0;
+
+    uint64_t elapsed = results.back() - results.front();
+    // timestampPeriod is in nanoseconds, convert to milliseconds
+    return static_cast<double>(elapsed) * impl().timestampPeriod / 1e6;
+}
+
+
+uint32_t QueryPool::queryCount() const
+{
+    return impl().queryCount;
+}
+
+
+void QueryPool::destroy()
+{
+    if (ppImpl && *ppImpl) {
+        delete *ppImpl;
+        *ppImpl = nullptr;
+    }
+}
+
 
 std::vector<DescriptorSet> DescriptorPool::operator()(std::vector<DescriptorSetLayout> setLayouts)
 {
