@@ -508,7 +508,8 @@ struct Buffer::Impl {
     , usage(usage)
     , reqMemProps(reqMemProps)
     , memProps(memProps) {}
-    ~Impl() {                           
+    ~Impl() {         
+        if (mapped) vkUnmapMemory(vkDevice, vkMemory);
         vkDestroyBuffer(vkDevice, vkBuffer, nullptr); 
         vkFreeMemory(vkDevice, vkMemory, nullptr); 
     }
@@ -2898,14 +2899,25 @@ Buffer Device::createBuffer(const BufferCreateInfo& info)
 uint8_t* Buffer::map(uint64_t offset, uint64_t size)
 {
     EVA_ASSERT(*this);
-    EVA_ASSERT(!impl().mapped);                                         // VUID-vkMapMemory-memory-00678        
     EVA_ASSERT((uint32_t)impl().memProps & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);  // VUID-vkMapMemory-memory-00682
     EVA_ASSERT(offset < impl().size);                                   // VUID-vkMapMemory-offset-00679
-    EVA_ASSERT(size == EVA_WHOLE_SIZE || offset + size <= impl().size);  // VUID-vkMapMemory-size-00681
+    
+    if (size == EVA_WHOLE_SIZE)
+        size = impl().size - offset;
+    else
+        EVA_ASSERT(offset + size <= impl().size);  // VUID-vkMapMemory-size-00681
+
+    if (impl().mapped)
+    {
+        if (impl().mappedOffset != offset || impl().mappedSize != size)
+            vkUnmapMemory(impl().vkDevice, impl().vkMemory);
+        else
+            return impl().mapped;
+    }
 
     ASSERT_SUCCESS(vkMapMemory(impl().vkDevice, impl().vkMemory, offset, size, 0, (void**)&impl().mapped));
     impl().mappedOffset = offset;
-    impl().mappedSize = size == EVA_WHOLE_SIZE ? impl().size : size;
+    impl().mappedSize = size;
     return impl().mapped;
 }
 
@@ -2943,7 +2955,9 @@ void Buffer::invalidate(uint64_t offset, uint64_t size) const
 
 void Buffer::unmap()
 {
-    EVA_ASSERT(impl().mapped); // VUID-vkUnmapMemory-memory-00689
+    if (!impl().mapped)  // avoid VUID-vkUnmapMemory-memory-00689
+        return;
+
     EVA_ASSERT((uint32_t)impl().memProps & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
 
     vkUnmapMemory(impl().vkDevice, impl().vkMemory);
@@ -3268,6 +3282,12 @@ std::vector<DescriptorSet> DescriptorPool::operator()(std::vector<DescriptorSetL
 /////////////////////////////////////////////////////////////////////////////////////////
 // DescriptorSet
 /////////////////////////////////////////////////////////////////////////////////////////
+/*
+* If the nullDescriptor feature is enabled, the buffer, acceleration structure, imageView, or
+* bufferView can be VK_NULL_HANDLE. Loads from a null descriptor return zero values and stores
+* and atomics to a null descriptor are discarded. A null acceleration structure descriptor results in
+* the miss shader being invoked.
+*/
 DescriptorSet DescriptorSet::write(
     std::vector<Descriptor> descriptors, 
     uint32_t startBindingId, 
@@ -3348,12 +3368,6 @@ DescriptorSet DescriptorSet::write(
                 // bufferInfos.push_back(std::get<BufferDescriptor>(descriptors[consumedDescriptors + i]).descInfo());
                 auto& desc = std::get<BufferDescriptor>(descriptors[consumedDescriptors + i]);
                 
-                /*
-                If the nullDescriptor feature is enabled, the buffer, acceleration structure, imageView, or
-                bufferView can be VK_NULL_HANDLE. Loads from a null descriptor return zero values and stores
-                and atomics to a null descriptor are discarded. A null acceleration structure descriptor results in
-                the miss shader being invoked.
-                */
                 bufferInfos.emplace_back(
                     desc.buffer ? desc.buffer.impl().vkBuffer : VK_NULL_HANDLE,
                     desc.offset,
