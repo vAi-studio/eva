@@ -180,6 +180,17 @@ static void printGpuInfo(uint32_t order, VkPhysicalDevice physicalDevice)
                 props.deviceType == VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU ? "Virtual GPU" :
                     props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU ? "CPU" : "Other");
 
+    // Device Local Memory 정보
+    VkPhysicalDeviceMemoryProperties memProps;
+    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProps);
+    for (uint32_t i = 0; i < memProps.memoryHeapCount; i++) {
+        if (memProps.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+            printf("        Device Local Memory (VRAM): %.2f GB\n",
+                memProps.memoryHeaps[i].size / (1024.0 * 1024.0 * 1024.0));
+            break;
+        }
+    }
+
     // Compute Shader 정보
     printf("        Max Workgroup Size:  [%u, %u, %u]\n",
         props.limits.maxComputeWorkGroupSize[0],
