@@ -168,15 +168,49 @@ static void printGpuInfo(uint32_t order, VkPhysicalDevice physicalDevice)
 {
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(physicalDevice, &props);
-    printf("[GPU %d] Device Name: %-30s API Version: %d.%d.%d  Driver Version: %d.%d.%d  Device Type: %-15s\n",
-        order,
-        props.deviceName,
-        VK_VERSION_MAJOR(props.apiVersion), VK_VERSION_MINOR(props.apiVersion), VK_VERSION_PATCH(props.apiVersion),
-        VK_VERSION_MAJOR(props.driverVersion), VK_VERSION_MINOR(props.driverVersion), VK_VERSION_PATCH(props.driverVersion),
+
+    printf("[GPU %d] %s\n", order, props.deviceName);
+    printf("        API Version: %d.%d.%d\n",
+        VK_VERSION_MAJOR(props.apiVersion), VK_VERSION_MINOR(props.apiVersion), VK_VERSION_PATCH(props.apiVersion));
+    printf("        Driver Version: %d.%d.%d\n",
+        VK_VERSION_MAJOR(props.driverVersion), VK_VERSION_MINOR(props.driverVersion), VK_VERSION_PATCH(props.driverVersion));
+    printf("        Device Type: %s\n",
         props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? "Integrated GPU" :
             props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? "Discrete GPU" :
                 props.deviceType == VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU ? "Virtual GPU" :
                     props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU ? "CPU" : "Other");
+
+    // Compute Shader 정보
+    printf("        Max Workgroup Size:  [%u, %u, %u]\n",
+        props.limits.maxComputeWorkGroupSize[0],
+        props.limits.maxComputeWorkGroupSize[1],
+        props.limits.maxComputeWorkGroupSize[2]);
+    printf("        Max Workgroup Invocations: %u\n", props.limits.maxComputeWorkGroupInvocations);
+    printf("        Max Shared Memory: %u bytes (%.1f KB)\n",
+        props.limits.maxComputeSharedMemorySize,
+        props.limits.maxComputeSharedMemorySize / 1024.0f);
+
+    // Subgroup 정보 (Vulkan 1.1+)
+    VkPhysicalDeviceSubgroupProperties subgroupProps = {};
+    subgroupProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
+    subgroupProps.pNext = nullptr;
+
+    VkPhysicalDeviceProperties2 props2 = {};
+    props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    props2.pNext = &subgroupProps;
+
+    vkGetPhysicalDeviceProperties2(physicalDevice, &props2);
+
+    printf("        Subgroup Size: %u\n", subgroupProps.subgroupSize);
+    printf("        Subgroup Supported Operations: 0x%x", subgroupProps.supportedOperations);
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_BASIC_BIT) printf(" BASIC");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_VOTE_BIT) printf(" VOTE");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_ARITHMETIC_BIT) printf(" ARITHMETIC");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_BALLOT_BIT) printf(" BALLOT");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_SHUFFLE_BIT) printf(" SHUFFLE");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_SHUFFLE_RELATIVE_BIT) printf(" SHUFFLE_REL");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_QUAD_BIT) printf(" QUAD");
+    printf("\n");
 }
 
 static bool deviceSupportsExtensions(
