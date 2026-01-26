@@ -283,6 +283,7 @@ struct Device::Impl {
     std::set<DescriptorSetLayout::Impl**> descSetLayouts;
     std::set<PipelineLayout::Impl**> pipelineLayouts;
     std::set<DescriptorPool::Impl**> descPools;
+    std::set<QueryPool::Impl**> queryPools;
 
 #ifdef EVA_ENABLE_RAYTRACING
     struct {
@@ -1246,6 +1247,7 @@ Device::Impl::~Impl()
     deleter(descSetLayouts);
     deleter(pipelineLayouts);
     deleter(descPools);
+    deleter(queryPools);
 
 #ifdef EVA_ENABLE_RAYTRACING
     deleter(raytracingPipelines);
@@ -3297,9 +3299,7 @@ QueryPool Device::createQueryPool(uint32_t queryCount)
         queryCount,
         props.limits.timestampPeriod);
 
-    // Note: QueryPool is not tracked in Device::Impl sets for simplicity
-    // The caller is responsible for destroying it
-    return QueryPool(new QueryPool::Impl*(pImpl));
+    return *impl().queryPools.insert(new QueryPool::Impl*(pImpl)).first;
 }
 
 
@@ -3344,15 +3344,6 @@ double QueryPool::getElapsedMs(uint32_t startQuery, uint32_t endQuery)
 uint32_t QueryPool::queryCount() const
 {
     return impl().queryCount;
-}
-
-
-void QueryPool::destroy()
-{
-    if (ppImpl && *ppImpl) {
-        delete *ppImpl;
-        *ppImpl = nullptr;
-    }
 }
 
 
@@ -4678,6 +4669,7 @@ DESTROY_MACRO(DescriptorSetLayout)
 DESTROY_MACRO(PipelineLayout)
 DESTROY_MACRO(DescriptorPool)
 DESTROY_MACRO(DescriptorSet)
+DESTROY_MACRO(QueryPool)
 #ifdef EVA_ENABLE_WINDOW
     DESTROY_MACRO(Window)
 #endif
