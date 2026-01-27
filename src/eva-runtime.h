@@ -210,6 +210,29 @@ struct DeviceSettings {
 };
 
 
+struct DeviceCapabilities {
+    // Basic info
+    std::string deviceName;
+    bool isDiscreteGpu;
+
+    // Compute limits
+    uint32_t maxWorkgroupSize[3];
+    uint32_t maxWorkgroupInvocations;
+    uint32_t maxSharedMemorySize;
+
+    // Subgroup
+    uint32_t subgroupSize;
+    uint32_t subgroupOperations;  // bitmask of supported operations
+
+    // Optional feature support
+    bool supportsAtomicFloat;         // shaderBufferFloat32AtomicAdd
+    bool supportsAtomicFloatShared;   // shaderSharedFloat32AtomicAdd
+
+    // Memory
+    uint64_t deviceLocalMemorySize;
+};
+
+
 enum QueueType {
     queue_graphics, 
     queue_compute, 
@@ -252,6 +275,7 @@ class Device {
 public:
     void reportGPUQueueFamilies() const;
     void reportAssignedQueues() const;
+    const DeviceCapabilities& capabilities() const;
 
     uint32_t queueCount(QueueType type) const;
     bool supportPresent(QueueType type) const;
