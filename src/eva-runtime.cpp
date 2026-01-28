@@ -2732,6 +2732,11 @@ DescriptorSetLayout ComputePipeline::descSetLayout(uint32_t setId) const
     return impl().layout.descSetLayout(setId);
 }
 
+uint32_t ComputePipeline::pushConstantSize() const
+{
+    return impl().layout.pushConstantSize();
+}
+
 
 /////////////////////////////////////////////////////////////////////////////////////////
 // RaytracingPipeline
@@ -3365,6 +3370,11 @@ PipelineLayout Device::createPipelineLayout(PipelineLayoutDesc desc)
 DescriptorSetLayout PipelineLayout::descSetLayout(uint32_t setId) const
 {
     return impl().setLayouts.at(setId);
+}
+
+uint32_t PipelineLayout::pushConstantSize() const
+{
+    return impl().uniquePushConstant ? impl().uniquePushConstant->size : 0;
 }
 
 
