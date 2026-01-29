@@ -168,15 +168,60 @@ static void printGpuInfo(uint32_t order, VkPhysicalDevice physicalDevice)
 {
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(physicalDevice, &props);
-    printf("[GPU %d] Device Name: %-30s API Version: %d.%d.%d  Driver Version: %d.%d.%d  Device Type: %-15s\n",
-        order,
-        props.deviceName,
-        VK_VERSION_MAJOR(props.apiVersion), VK_VERSION_MINOR(props.apiVersion), VK_VERSION_PATCH(props.apiVersion),
-        VK_VERSION_MAJOR(props.driverVersion), VK_VERSION_MINOR(props.driverVersion), VK_VERSION_PATCH(props.driverVersion),
+
+    printf("[GPU %d] %s\n", order, props.deviceName);
+    printf("        API Version: %d.%d.%d\n",
+        VK_VERSION_MAJOR(props.apiVersion), VK_VERSION_MINOR(props.apiVersion), VK_VERSION_PATCH(props.apiVersion));
+    printf("        Driver Version: %d.%d.%d\n",
+        VK_VERSION_MAJOR(props.driverVersion), VK_VERSION_MINOR(props.driverVersion), VK_VERSION_PATCH(props.driverVersion));
+    printf("        Device Type: %s\n",
         props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? "Integrated GPU" :
             props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? "Discrete GPU" :
                 props.deviceType == VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU ? "Virtual GPU" :
                     props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU ? "CPU" : "Other");
+
+    // Device Local Memory 정보
+    VkPhysicalDeviceMemoryProperties memProps;
+    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProps);
+    for (uint32_t i = 0; i < memProps.memoryHeapCount; i++) {
+        if (memProps.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+            printf("        Device Local Memory (VRAM): %.2f GB\n",
+                memProps.memoryHeaps[i].size / (1024.0 * 1024.0 * 1024.0));
+            break;
+        }
+    }
+
+    // Compute Shader 정보
+    printf("        Max Workgroup Size:  [%u, %u, %u]\n",
+        props.limits.maxComputeWorkGroupSize[0],
+        props.limits.maxComputeWorkGroupSize[1],
+        props.limits.maxComputeWorkGroupSize[2]);
+    printf("        Max Workgroup Invocations: %u\n", props.limits.maxComputeWorkGroupInvocations);
+    printf("        Max Shared Memory: %u bytes (%.1f KB)\n",
+        props.limits.maxComputeSharedMemorySize,
+        props.limits.maxComputeSharedMemorySize / 1024.0f);
+
+    // Subgroup 정보 (Vulkan 1.1+)
+    VkPhysicalDeviceSubgroupProperties subgroupProps = {};
+    subgroupProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
+    subgroupProps.pNext = nullptr;
+
+    VkPhysicalDeviceProperties2 props2 = {};
+    props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    props2.pNext = &subgroupProps;
+
+    vkGetPhysicalDeviceProperties2(physicalDevice, &props2);
+
+    printf("        Subgroup Size: %u\n", subgroupProps.subgroupSize);
+    printf("        Subgroup Supported Operations: 0x%x", subgroupProps.supportedOperations);
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_BASIC_BIT) printf(" BASIC");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_VOTE_BIT) printf(" VOTE");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_ARITHMETIC_BIT) printf(" ARITHMETIC");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_BALLOT_BIT) printf(" BALLOT");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_SHUFFLE_BIT) printf(" SHUFFLE");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_SHUFFLE_RELATIVE_BIT) printf(" SHUFFLE_REL");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_QUAD_BIT) printf(" QUAD");
+    printf("\n");
 }
 
 static bool deviceSupportsExtensions(
@@ -269,6 +314,7 @@ struct Device::Impl {
     // const VkInstance vkInstance;
     const Runtime& parent;
     const DeviceSettings settings;
+    const DeviceCapabilities capabilities;
 
     std::set<CommandPool::Impl**> cmdPools;
     std::set<Fence::Impl**> fences;
@@ -283,6 +329,7 @@ struct Device::Impl {
     std::set<DescriptorSetLayout::Impl**> descSetLayouts;
     std::set<PipelineLayout::Impl**> pipelineLayouts;
     std::set<DescriptorPool::Impl**> descPools;
+    std::set<QueryPool::Impl**> queryPools;
 
 #ifdef EVA_ENABLE_RAYTRACING
     struct {
@@ -300,21 +347,23 @@ struct Device::Impl {
 
     CommandPool defaultCmdPool[queue_max][8] = {};
 
-    Impl(VkPhysicalDevice vkPhysicalDevice,   
-        VkDevice vkDevice, 
+    Impl(VkPhysicalDevice vkPhysicalDevice,
+        VkDevice vkDevice,
         const Runtime& parent,
         const DeviceSettings& settings,
+        const DeviceCapabilities& capabilities,
         uint32_t graphicsQfIndex,
         uint32_t computeQfIndex,
         uint32_t transferQfIndex,
-        std::vector<std::vector<Queue>>&& queues) 
+        std::vector<std::vector<Queue>>&& queues)
     : vkPhysicalDevice(vkPhysicalDevice)
     , vkDevice(vkDevice)
     , parent(parent)
     , settings(settings)
+    , capabilities(capabilities)
     , qfIndex{
-        graphicsQfIndex, 
-        computeQfIndex, 
+        graphicsQfIndex,
+        computeQfIndex,
         transferQfIndex}
         , qCount{
             graphicsQfIndex != uint32_t(-1) ? (uint32_t) queues[graphicsQfIndex].size() : 0,
@@ -737,6 +786,24 @@ struct AccelerationStructure::Impl {
 #endif
 
 
+struct QueryPool::Impl {
+    VkDevice vkDevice;
+    VkQueryPool vkQueryPool;
+    uint32_t queryCount;
+    float timestampPeriod;  // nanoseconds per tick
+
+    Impl(VkDevice vkDevice, VkQueryPool vkQueryPool, uint32_t queryCount, float timestampPeriod)
+    : vkDevice(vkDevice)
+    , vkQueryPool(vkQueryPool)
+    , queryCount(queryCount)
+    , timestampPeriod(timestampPeriod)
+    {}
+
+    ~Impl() {
+        vkDestroyQueryPool(vkDevice, vkQueryPool, nullptr);
+    }
+};
+
 
 /////////////////////////////////////////////////////////////////////////////////////////
 // Runtime
@@ -886,11 +953,33 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     ///////////////////////////////////////////////////////////////////////////////////////////
     VkPhysicalDevice pd = physicalDevices[selected];
     auto qfProps = arrayFrom(vkGetPhysicalDeviceQueueFamilyProperties, pd);
-    
+
+    // Query optional atomic float feature support
+    bool hasAtomicFloatExt = deviceSupportsExtensions(pd, {VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME});
+    bool supportsAtomicFloat = false;
+    if (hasAtomicFloatExt) {
+        VkPhysicalDeviceShaderAtomicFloatFeaturesEXT atomicFloatFeatures{};
+        atomicFloatFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT;
+
+        VkPhysicalDeviceFeatures2 features2{};
+        features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features2.pNext = &atomicFloatFeatures;
+        vkGetPhysicalDeviceFeatures2(pd, &features2);
+
+        supportsAtomicFloat = atomicFloatFeatures.shaderBufferFloat32AtomicAdd;
+    }
+    printf("        Atomic Float (shaderBufferFloat32AtomicAdd): %s\n", supportsAtomicFloat ? "Supported" : "Not Supported");
+    fflush(stdout);
+
+    // Required extensions
     std::vector<const char*> reqExtentions = {
-        VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME,
         VK_EXT_ROBUSTNESS_2_EXTENSION_NAME
     };
+
+    // Optional extensions
+    if (supportsAtomicFloat) {
+        reqExtentions.push_back(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME);
+    }
 
 #ifdef EVA_ENABLE_WINDOW
     if (settings.enableWindow)
@@ -1074,21 +1163,24 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
         });
 
+        // Required features
         chain.add(VkPhysicalDeviceSynchronization2Features{
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES,
             .synchronization2 = VK_TRUE,
-        });
-    
-        chain.add(VkPhysicalDeviceShaderAtomicFloatFeaturesEXT{
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT,
-            .shaderBufferFloat32AtomicAdd = VK_TRUE,
-            //.shaderSharedFloat32AtomicAdd = VK_TRUE,
         });
 
         chain.add(VkPhysicalDeviceRobustness2FeaturesEXT{
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
             .nullDescriptor = VK_TRUE,
         });
+
+        // Optional features
+        if (supportsAtomicFloat) {
+            chain.add(VkPhysicalDeviceShaderAtomicFloatFeaturesEXT{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT,
+                .shaderBufferFloat32AtomicAdd = VK_TRUE,
+            });
+        }
 
 #ifdef EVA_ENABLE_RAYTRACING
         if (settings.enableRaytracing)
@@ -1142,11 +1234,53 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         }
     }
 
+    // Populate DeviceCapabilities
+    DeviceCapabilities caps;
+    {
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(pd, &props);
+
+        caps.deviceName = props.deviceName;
+        caps.isDiscreteGpu = (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU);
+        caps.maxWorkgroupSize[0] = props.limits.maxComputeWorkGroupSize[0];
+        caps.maxWorkgroupSize[1] = props.limits.maxComputeWorkGroupSize[1];
+        caps.maxWorkgroupSize[2] = props.limits.maxComputeWorkGroupSize[2];
+        caps.maxWorkgroupInvocations = props.limits.maxComputeWorkGroupInvocations;
+        caps.maxSharedMemorySize = props.limits.maxComputeSharedMemorySize;
+
+        // Subgroup properties
+        VkPhysicalDeviceSubgroupProperties subgroupProps{};
+        subgroupProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
+        VkPhysicalDeviceProperties2 props2{};
+        props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        props2.pNext = &subgroupProps;
+        vkGetPhysicalDeviceProperties2(pd, &props2);
+
+        caps.subgroupSize = subgroupProps.subgroupSize;
+        caps.subgroupOperations = subgroupProps.supportedOperations;
+
+        // Optional features
+        caps.supportsAtomicFloat = supportsAtomicFloat;
+        caps.supportsAtomicFloatShared = false;  // TODO: query if needed
+
+        // Device local memory
+        VkPhysicalDeviceMemoryProperties memProps;
+        vkGetPhysicalDeviceMemoryProperties(pd, &memProps);
+        caps.deviceLocalMemorySize = 0;
+        for (uint32_t i = 0; i < memProps.memoryHeapCount; i++) {
+            if (memProps.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+                caps.deviceLocalMemorySize = memProps.memoryHeaps[i].size;
+                break;
+            }
+        }
+    }
+
     auto pImpl = new Device::Impl(
         pd,
         vkDevice,
         *this,
         settings,
+        caps,
         qfIndex[queue_graphics],
         qfIndex[queue_compute],
         qfIndex[queue_transfer],
@@ -1229,6 +1363,7 @@ Device::Impl::~Impl()
     deleter(descSetLayouts);
     deleter(pipelineLayouts);
     deleter(descPools);
+    deleter(queryPools);
 
 #ifdef EVA_ENABLE_RAYTRACING
     deleter(raytracingPipelines);
@@ -1265,6 +1400,11 @@ void Device::reportAssignedQueues() const
     printf("***Transfer Queues***\n");
     reportQfs(impl().queues[impl().qfIndex[queue_transfer]]);
     fflush(stdout);
+}
+
+const DeviceCapabilities& Device::capabilities() const
+{
+    return impl().capabilities;
 }
 
 uint32_t Device::queueCount(QueueType type) const 
@@ -2203,6 +2343,26 @@ CommandBuffer CommandBuffer::dispatch(uint32_t groupCountX, uint32_t groupCountY
     return *this;
 }
 
+
+CommandBuffer CommandBuffer::resetQueryPool(QueryPool pool, uint32_t firstQuery, uint32_t queryCount)
+{
+    if (queryCount == 0) queryCount = pool.queryCount() - firstQuery;
+    vkCmdResetQueryPool(impl().vkCmdBuffer, pool.impl().vkQueryPool, firstQuery, queryCount);
+    return *this;
+}
+
+
+CommandBuffer CommandBuffer::writeTimestamp(PIPELINE_STAGE stage, QueryPool pool, uint32_t query)
+{
+    vkCmdWriteTimestamp(
+        impl().vkCmdBuffer,
+        (VkPipelineStageFlagBits)(uint64_t)stage,
+        pool.impl().vkQueryPool,
+        query);
+    return *this;
+}
+
+
 #ifdef EVA_ENABLE_RAYTRACING
 CommandBuffer CommandBuffer::traceRays(
     ShaderBindingTable hitGroupSbt, uint32_t width, uint32_t height, uint32_t depth)
@@ -2571,6 +2731,11 @@ PipelineLayout ComputePipeline::layout() const
 DescriptorSetLayout ComputePipeline::descSetLayout(uint32_t setId) const
 {
     return impl().layout.descSetLayout(setId);
+}
+
+uint32_t ComputePipeline::pushConstantSize() const
+{
+    return impl().layout.pushConstantSize();
 }
 
 
@@ -3221,6 +3386,11 @@ DescriptorSetLayout PipelineLayout::descSetLayout(uint32_t setId) const
     return impl().setLayouts.at(setId);
 }
 
+uint32_t PipelineLayout::pushConstantSize() const
+{
+    return impl().uniquePushConstant ? impl().uniquePushConstant->size : 0;
+}
+
 
 /////////////////////////////////////////////////////////////////////////////////////////
 // DescriptorPool
@@ -3250,6 +3420,76 @@ DescriptorPool Device::createDescriptorPool(const DescriptorPoolCreateInfo& info
 
     return *impl().descPools.insert(new DescriptorPool::Impl*(pImpl)).first;
 }
+
+
+QueryPool Device::createQueryPool(uint32_t queryCount)
+{
+    VkQueryPoolCreateInfo createInfo = {
+        .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+        .queryType = VK_QUERY_TYPE_TIMESTAMP,
+        .queryCount = queryCount,
+    };
+
+    VkQueryPool vkQueryPool;
+    ASSERT_SUCCESS(vkCreateQueryPool(impl().vkDevice, &createInfo, nullptr, &vkQueryPool));
+
+    // Get timestamp period from physical device
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(impl().vkPhysicalDevice, &props);
+
+    auto pImpl = new QueryPool::Impl(
+        impl().vkDevice,
+        vkQueryPool,
+        queryCount,
+        props.limits.timestampPeriod);
+
+    return *impl().queryPools.insert(new QueryPool::Impl*(pImpl)).first;
+}
+
+
+bool Device::supportsTimestampQueries() const
+{
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(impl().vkPhysicalDevice, &props);
+    return props.limits.timestampComputeAndGraphics == VK_TRUE;
+}
+
+
+std::vector<uint64_t> QueryPool::getResults(uint32_t firstQuery, uint32_t queryCount)
+{
+    if (queryCount == 0) queryCount = impl().queryCount - firstQuery;
+
+    std::vector<uint64_t> results(queryCount);
+    vkGetQueryPoolResults(
+        impl().vkDevice,
+        impl().vkQueryPool,
+        firstQuery,
+        queryCount,
+        queryCount * sizeof(uint64_t),
+        results.data(),
+        sizeof(uint64_t),
+        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT
+    );
+    return results;
+}
+
+
+double QueryPool::getElapsedMs(uint32_t startQuery, uint32_t endQuery)
+{
+    auto results = getResults(startQuery, endQuery - startQuery + 1);
+    if (results.size() < 2) return 0.0;
+
+    uint64_t elapsed = results.back() - results.front();
+    // timestampPeriod is in nanoseconds, convert to milliseconds
+    return static_cast<double>(elapsed) * impl().timestampPeriod / 1e6;
+}
+
+
+uint32_t QueryPool::queryCount() const
+{
+    return impl().queryCount;
+}
+
 
 std::vector<DescriptorSet> DescriptorPool::operator()(std::vector<DescriptorSetLayout> setLayouts)
 {
@@ -4573,6 +4813,7 @@ DESTROY_MACRO(DescriptorSetLayout)
 DESTROY_MACRO(PipelineLayout)
 DESTROY_MACRO(DescriptorPool)
 DESTROY_MACRO(DescriptorSet)
+DESTROY_MACRO(QueryPool)
 #ifdef EVA_ENABLE_WINDOW
     DESTROY_MACRO(Window)
 #endif
