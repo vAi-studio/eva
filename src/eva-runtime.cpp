@@ -889,7 +889,9 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     
     std::vector<const char*> reqExtentions = {
         VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME,
-        VK_EXT_ROBUSTNESS_2_EXTENSION_NAME
+        VK_EXT_ROBUSTNESS_2_EXTENSION_NAME,
+        VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME,
+        VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME
     };
 
 #ifdef EVA_ENABLE_WINDOW
@@ -1088,6 +1090,11 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         chain.add(VkPhysicalDeviceRobustness2FeaturesEXT{
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
             .nullDescriptor = VK_TRUE,
+        });
+
+        chain.add(VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT,
+            .graphicsPipelineLibrary = VK_TRUE,
         });
 
 #ifdef EVA_ENABLE_RAYTRACING
@@ -1657,19 +1664,19 @@ CommandBuffer CommandBuffer::bindPipeline(Pipeline pipeline)
 }
 
 CommandBuffer CommandBuffer::bindDescSets(
-    PipelineLayout layout, 
+    PipelineLayout layout,
     PIPELINE_BIND_POINT bindPoint,
     std::vector<DescriptorSet> descSets,
     uint32_t firstSet)
 {
     std::vector<VkDescriptorSet> vkDescSets(descSets.size());
-    for (uint32_t i = 0; i < descSets.size(); ++i) 
-        vkDescSets[i] = descSets[i].impl().vkDescSet;
+    for (uint32_t i = 0; i < descSets.size(); ++i)
+        vkDescSets[i] = descSets[i] ? descSets[i].impl().vkDescSet : VK_NULL_HANDLE;
 
     vkCmdBindDescriptorSets(
-        impl().vkCmdBuffer, (VkPipelineBindPoint)(uint32_t)bindPoint, 
-        layout.impl().vkPipeLayout, firstSet, 
-        (uint32_t)vkDescSets.size(), vkDescSets.data(), 
+        impl().vkCmdBuffer, (VkPipelineBindPoint)(uint32_t)bindPoint,
+        layout.impl().vkPipeLayout, firstSet,
+        (uint32_t)vkDescSets.size(), vkDescSets.data(),
         0, nullptr);
     return *this;
 }
@@ -1679,8 +1686,8 @@ CommandBuffer CommandBuffer::bindDescSets(
     uint32_t firstSet)
 {
     std::vector<VkDescriptorSet> vkDescSets(descSets.size());
-    for (uint32_t i = 0; i < descSets.size(); ++i) 
-        vkDescSets[i] = descSets[i].impl().vkDescSet;
+    for (uint32_t i = 0; i < descSets.size(); ++i)
+        vkDescSets[i] = descSets[i] ? descSets[i].impl().vkDescSet : VK_NULL_HANDLE;
 
     auto index = impl().boundPipeline.index();
     VkPipelineBindPoint bindPoint;
