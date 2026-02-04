@@ -195,16 +195,16 @@ namespace portable {
 
 
 struct DeviceSettings {
-    bool enableGraphicsQueues;
-    bool enableComputeQueues;
-    bool enableTransferQueues;
+    bool enableGraphicsQueues = false;
+    bool enableComputeQueues = true;    // At least one queue type must be enabled
+    bool enableTransferQueues = true;   // Transfer queue is commonly needed
 #ifdef EVA_ENABLE_WINDOW
-    bool enableWindow;
+    bool enableWindow = false;
 #endif
 #ifdef EVA_ENABLE_RAYTRACING
-    bool enableRaytracing;
+    bool enableRaytracing = false;
 #endif
-    bool enableExternalMemory;  // Enable VK_KHR_external_memory for D3D11/DMABuf interop
+    bool enableExternalMemory = false;  // Enable VK_KHR_external_memory for D3D11/DMABuf interop
     // bool operator==(const DeviceSettings&) const = default;
     bool operator<=(const DeviceSettings& other) const {
         return (!enableGraphicsQueues || other.enableGraphicsQueues) &&
@@ -244,11 +244,16 @@ class Runtime {
     Runtime(const Runtime&) = delete;
     Runtime& operator=(const Runtime&) = delete;
     Device createDevice(const DeviceSettings& settings);
-    
+    bool _shutdown = false;  // Track if explicitly shutdown
+
 public:
     static Runtime& get();    // singleton pattern
+
+    // Explicitly shutdown the runtime to prevent validation errors during static destruction
+    void shutdown();
+
     uint32_t deviceCount() const;
-    Device device(int gpuIndex=-1); 
+    Device device(int gpuIndex=-1);
     Device device(DeviceSettings settings);
 
 #ifdef EVA_ENABLE_WINDOW
@@ -913,7 +918,7 @@ struct ConstantID {
 // };
 
 
-template<int ID, class T>
+template<uint32_t ID, class T>
 inline auto constant_id(T v)
 {
     return ConstantID<ID, T>{v};
@@ -924,7 +929,7 @@ inline auto constant_id(T v)
 * If the specialization constant is of type boolean, size must be the byte size of VkBool32.
 * And in Vulkan, VkBool32 is defined as uint32_t.
 */
-template<int ID>
+template<uint32_t ID>
 inline auto constant_id(bool v)
 {
     return ConstantID<ID, uint32_t>{ v ? 1u : 0u };
@@ -1016,8 +1021,8 @@ struct ShaderStage {
     ShaderStage(ShaderType shader, SpecializationConstant&& spec ={})
     : shader(shader), specialization(std::move(spec)) {}
 
-    template<int ID, typename T>
-    ShaderStage operator+(ConstantID<ID, T> constant) && 
+    template<uint32_t ID, typename T>
+    ShaderStage operator+(ConstantID<ID, T> constant) &&
     {
         specialization.addConstant(constant);
         return std::move(*this);
@@ -1027,8 +1032,8 @@ struct ShaderStage {
 };
 
 
-template<int ID, typename T>
-inline ShaderStage operator+(ShaderInput shader, ConstantID<ID, T> constant) 
+template<uint32_t ID, typename T>
+inline ShaderStage operator+(ShaderInput shader, ConstantID<ID, T> constant)
 {
     return ShaderStage(shader) + constant;
 }

@@ -776,6 +776,12 @@ Runtime::Runtime()
 
 Runtime::~Runtime()
 {
+    // Skip cleanup if already explicitly shutdown
+    // This prevents Vulkan validation errors during static destruction
+    if (_shutdown) {
+        return;
+    }
+
 #ifdef EVA_ENABLE_WINDOW
     for (auto& window : impl().windows)
     {
@@ -792,6 +798,38 @@ Runtime::~Runtime()
 
     vkDestroyInstance(impl().instance, nullptr);
     delete pImpl;
+
+#ifdef EVA_ENABLE_WINDOW
+    // glfwTerminate();
+#endif
+}
+
+void Runtime::shutdown()
+{
+    if (_shutdown) {
+        return;
+    }
+    _shutdown = true;
+
+#ifdef EVA_ENABLE_WINDOW
+    for (auto& window : impl().windows)
+    {
+        window.destroy();
+        delete window.ppImpl;
+    }
+    impl().windows.clear();
+#endif
+
+    for (auto& device : impl().devices)
+    {
+        device.destroy();
+        delete device.ppImpl;
+    }
+    impl().devices.clear();
+
+    vkDestroyInstance(impl().instance, nullptr);
+    delete pImpl;
+    pImpl = nullptr;
 
 #ifdef EVA_ENABLE_WINDOW
     // glfwTerminate();
