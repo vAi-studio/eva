@@ -2163,9 +2163,37 @@ CommandBuffer CommandBuffer::copyBuffer(
 CommandBuffer CommandBuffer::copyBuffer(BufferRange src, BufferRange dst)
 {
     return copyBuffer(
-        src.buffer, dst.buffer, 
-        src.offset, dst.offset, 
+        src.buffer, dst.buffer,
+        src.offset, dst.offset,
         std::min(src.size, dst.size));
+}
+
+CommandBuffer CommandBuffer::fillBuffer(
+    Buffer dst,
+    uint32_t data,
+    uint64_t dstOffset,
+    uint64_t size)
+{
+    EVA_ASSERT((uint32_t)dst.impl().usage & VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    EVA_ASSERT(dstOffset < dst.size());
+
+    if (size == EVA_WHOLE_SIZE)
+        size = dst.size() - dstOffset;
+    else
+        EVA_ASSERT(dstOffset + size <= dst.size());
+
+    // vkCmdFillBuffer requires size to be a multiple of 4
+    EVA_ASSERT(size % 4 == 0);
+    EVA_ASSERT(dstOffset % 4 == 0);
+
+    vkCmdFillBuffer(
+        impl().vkCmdBuffer,
+        dst.impl().vkBuffer,
+        dstOffset,
+        size,
+        data);
+
+    return *this;
 }
 
 CommandBuffer CommandBuffer::copyImage(
