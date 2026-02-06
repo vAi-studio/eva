@@ -74,6 +74,9 @@ add_library(eva STATIC
     src/eva-buffer-pool.h
 )
 
+# Enable position-independent code for linking into shared libraries
+set_target_properties(eva PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # Include directories
 target_include_directories(eva
 PRIVATE

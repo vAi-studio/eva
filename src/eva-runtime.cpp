@@ -944,9 +944,13 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     VkPhysicalDevice pd = physicalDevices[selected];
     auto qfProps = arrayFrom(vkGetPhysicalDeviceQueueFamilyProperties, pd);
     
-    std::vector<const char*> reqExtentions = {
-        VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME
-    };
+    std::vector<const char*> reqExtentions = {};
+
+    // VK_EXT_shader_atomic_float is optional - only add if supported
+    if (deviceSupportsExtensions(pd, {VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME}))
+    {
+        reqExtentions.push_back(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME);
+    }
 
 #ifdef EVA_ENABLE_WINDOW
     if (settings.enableWindow)
@@ -2950,10 +2954,14 @@ Buffer Device::importExternalBuffer(
 uint8_t* Buffer::map(uint64_t offset, uint64_t size)
 {
     EVA_ASSERT(*this);
-    EVA_ASSERT(!impl().mapped);                                         // VUID-vkMapMemory-memory-00678        
     EVA_ASSERT((uint32_t)impl().memProps & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);  // VUID-vkMapMemory-memory-00682
     EVA_ASSERT(offset < impl().size);                                   // VUID-vkMapMemory-offset-00679
     EVA_ASSERT(size == EVA_WHOLE_SIZE || offset + size <= impl().size);  // VUID-vkMapMemory-size-00681
+
+    // Return existing mapping if already mapped (VUID-vkMapMemory-memory-00678)
+    if (impl().mapped) {
+        return impl().mapped + offset;
+    }
 
     ASSERT_SUCCESS(vkMapMemory(impl().vkDevice, impl().vkMemory, offset, size, 0, (void**)&impl().mapped));
     impl().mappedOffset = offset;

@@ -60,6 +60,13 @@ public:
         size_t maxSize = size_t(-1)
     )
     {
+        // Vulkan spec requires size > 0 (VUID-VkBufferCreateInfo-size-00912)
+        if (minSize == 0) {
+            if (logLevel >= 1)
+                std::printf("[BufferPool] WARNING: requested 0 bytes, returning empty buffer\n");
+            return PooledBuffer{};
+        }
+
         auto& subPool = bufferPool[usageFlags];
 
         if (logLevel >= 1)
