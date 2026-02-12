@@ -196,6 +196,7 @@ struct DeviceSettings {
     bool enableRaytracing;
 #endif
     bool enableCooperativeMatrix = false;  // VK_KHR/NV cooperative matrix for Tensor Core
+    bool enablePipelineExecutableInfo = false;  // VK_KHR_pipeline_executable_properties for SASS dump
     // bool operator==(const DeviceSettings&) const = default;
     bool operator<=(const DeviceSettings& other) const {
         return (!enableGraphicsQueues || other.enableGraphicsQueues) &&
@@ -208,6 +209,7 @@ struct DeviceSettings {
                && (!enableRaytracing  || other.enableRaytracing)
 #endif
                && (!enableCooperativeMatrix || other.enableCooperativeMatrix)
+               && (!enablePipelineExecutableInfo || other.enablePipelineExecutableInfo)
                ;
     }
 };
@@ -239,8 +241,9 @@ class Runtime {
 public:
     static Runtime& get();    // singleton pattern
     uint32_t deviceCount() const;
-    Device device(int gpuIndex=-1); 
+    Device device(int gpuIndex=-1);
     Device device(DeviceSettings settings);
+    void* nativeInstance() const;
 
 #ifdef EVA_ENABLE_WINDOW
     Window createWindow(WindowCreateInfo info);
@@ -253,6 +256,9 @@ class Device {
     VULKAN_CLASS_COMMON2(Device)
 
 public:
+    void* nativeDevice() const;
+    void* nativePhysicalDevice() const;
+
     void reportGPUQueueFamilies() const;
     void reportAssignedQueues() const;
 
@@ -353,6 +359,8 @@ public:
 class CommandBuffer {
     VULKAN_CLASS_COMMON2(CommandBuffer)
 public:
+
+    void* nativeCommandBuffer() const;
 
     QueueType type() const;
 
@@ -520,6 +528,10 @@ public:
 
     PipelineLayout layout() const;
     DescriptorSetLayout descSetLayout(uint32_t setId=0) const;
+
+    // Dump SASS and other internal representations (requires enablePipelineExecutableInfo)
+    // Returns list of {name, description, data} tuples
+    void dumpInternalRepresentations(const char* outputDir = nullptr) const;
 };
 
 

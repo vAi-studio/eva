@@ -90,6 +90,9 @@ eva::SpvBlob eva::SpvBlob::readFrom(const char* filepath)
 
 
 PFN_vkGetBufferDeviceAddressKHR vkGetBufferDeviceAddressKHR_ = nullptr;
+PFN_vkGetPipelineExecutablePropertiesKHR vkGetPipelineExecutablePropertiesKHR_ = nullptr;
+PFN_vkGetPipelineExecutableInternalRepresentationsKHR vkGetPipelineExecutableInternalRepresentationsKHR_ = nullptr;
+PFN_vkGetPipelineExecutableStatisticsKHR vkGetPipelineExecutableStatisticsKHR_ = nullptr;
 #ifdef EVA_ENABLE_RAYTRACING
     PFN_vkCreateAccelerationStructureKHR vkCreateAccelerationStructureKHR_ = nullptr;
     PFN_vkDestroyAccelerationStructureKHR vkDestroyAccelerationStructureKHR_ = nullptr;
@@ -783,6 +786,8 @@ Runtime::~Runtime()
 #endif
 }
 
+void* Runtime::nativeInstance() const { return impl().instance; }
+
 uint32_t Runtime::deviceCount() const
 {
     return (uint32_t)impl().devices.size();
@@ -977,6 +982,13 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         }
     }
 
+    // VK_KHR_pipeline_executable_properties for SASS dump
+    if (settings.enablePipelineExecutableInfo)
+    {
+        reqExtentions.push_back(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);
+        printf("[EVA] VK_KHR_pipeline_executable_properties enabled\n");
+    }
+
     if (!deviceSupportsExtensions(pd, reqExtentions))
     {
         throw std::runtime_error("The selected physical device does not support the required extensions.");
@@ -1155,6 +1167,12 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             .shaderFloat16 = VK_TRUE,
         });
 
+        // @chay116 - bufferDeviceAddress: always enabled (BDA push constants used by all GEMM paths)
+        chain.add(VkPhysicalDeviceBufferDeviceAddressFeatures{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
+            .bufferDeviceAddress = VK_TRUE,
+        });
+
 #ifdef EVA_ENABLE_RAYTRACING
         if (settings.enableRaytracing)
         {
@@ -1196,17 +1214,18 @@ Device Runtime::createDevice(const DeviceSettings& settings)
                     .cooperativeMatrixBlockLoads = VK_TRUE,
                 });
 
-                // @chay116 2026/01/06 - tensorLayoutNV requires bufferDeviceAddress
-                // This is required for tensor addressing operations (coopMatLoadTensorNV)
-                // llama.cpp also requires this for coopmat2: vk12_features.bufferDeviceAddress
-                chain.add(VkPhysicalDeviceBufferDeviceAddressFeatures{
-                    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
-                    .bufferDeviceAddress = VK_TRUE,
-                });
-
                 // Set global flag for runtime query
                 eva::gCoopMat2Supported = true;
             }
+        }
+
+        // VK_KHR_pipeline_executable_properties for SASS dump
+        if (settings.enablePipelineExecutableInfo)
+        {
+            chain.add(VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR,
+                .pipelineExecutableInfo = VK_TRUE,
+            });
         }
     }
 
@@ -1286,10 +1305,9 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     }
 #endif
 
-    // @chay116 2026/01/07 - Load vkGetBufferDeviceAddress for coopmat2 tensor addressing
-    // This is needed for SHADER_DEVICE_ADDRESS buffers used with coopMatLoadTensorNV
+    // @chay116 - Load vkGetBufferDeviceAddress (always, BDA used by all GEMM paths)
     // Note: In Vulkan 1.2+, bufferDeviceAddress is a core feature (no KHR suffix)
-    if (coopmat2_supported && vkGetBufferDeviceAddressKHR_ == nullptr)
+    if (vkGetBufferDeviceAddressKHR_ == nullptr)
     {
         // Try core Vulkan 1.2 version first
         vkGetBufferDeviceAddressKHR_ = (PFN_vkGetBufferDeviceAddressKHR)vkGetDeviceProcAddr(vkDevice, "vkGetBufferDeviceAddress");
@@ -1301,6 +1319,22 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             printf("[EVA] vkGetBufferDeviceAddress loaded successfully!\n");
         else
             printf("[EVA] ERROR: Failed to load vkGetBufferDeviceAddress!\n");
+    }
+
+    // Load pipeline executable properties function pointers
+    if (settings.enablePipelineExecutableInfo)
+    {
+        vkGetPipelineExecutablePropertiesKHR_ = (PFN_vkGetPipelineExecutablePropertiesKHR)
+            vkGetDeviceProcAddr(vkDevice, "vkGetPipelineExecutablePropertiesKHR");
+        vkGetPipelineExecutableInternalRepresentationsKHR_ = (PFN_vkGetPipelineExecutableInternalRepresentationsKHR)
+            vkGetDeviceProcAddr(vkDevice, "vkGetPipelineExecutableInternalRepresentationsKHR");
+        vkGetPipelineExecutableStatisticsKHR_ = (PFN_vkGetPipelineExecutableStatisticsKHR)
+            vkGetDeviceProcAddr(vkDevice, "vkGetPipelineExecutableStatisticsKHR");
+
+        if (vkGetPipelineExecutablePropertiesKHR_ && vkGetPipelineExecutableInternalRepresentationsKHR_)
+            printf("[EVA] Pipeline executable properties loaded (SASS dump available)\n");
+        else
+            printf("[EVA] ERROR: Failed to load pipeline executable properties functions!\n");
     }
 
     return impl().devices.emplace_back(new Device::Impl*(pImpl));
@@ -1355,6 +1389,9 @@ Device::Impl::~Impl()
 
     vkDestroyDevice(vkDevice, nullptr);
 }
+
+void* Device::nativeDevice() const { return impl().vkDevice; }
+void* Device::nativePhysicalDevice() const { return impl().vkPhysicalDevice; }
 
 void Device::reportGPUQueueFamilies() const
 {
@@ -1697,6 +1734,8 @@ CommandBuffer CommandPool::newCommandBuffer()
 /////////////////////////////////////////////////////////////////////////////////////////
 // CommandBuffer
 /////////////////////////////////////////////////////////////////////////////////////////
+void* CommandBuffer::nativeCommandBuffer() const { return impl().vkCmdBuffer; }
+
 QueueType CommandBuffer::type() const
 {
     return impl().type;
@@ -2672,6 +2711,11 @@ ComputePipeline Device::createComputePipeline(const ComputePipelineCreateInfo& i
 
     VkComputePipelineCreateInfo createInfo{
         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .flags = (VkPipelineCreateFlags)(
+            vkGetPipelineExecutablePropertiesKHR_
+                ? (VK_PIPELINE_CREATE_CAPTURE_INTERNAL_REPRESENTATIONS_BIT_KHR
+                   | VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR)
+                : 0),
         .stage = stageInfo,
         .layout = layout.impl().vkPipeLayout,
     };
@@ -2702,6 +2746,123 @@ PipelineLayout ComputePipeline::layout() const
 DescriptorSetLayout ComputePipeline::descSetLayout(uint32_t setId) const
 {
     return impl().layout.descSetLayout(setId);
+}
+
+void ComputePipeline::dumpInternalRepresentations(const char* outputDir) const
+{
+    if (!vkGetPipelineExecutablePropertiesKHR_ || !vkGetPipelineExecutableInternalRepresentationsKHR_)
+    {
+        printf("[EVA] SASS dump not available (enablePipelineExecutableInfo not set)\n");
+        return;
+    }
+
+    VkPipelineInfoKHR pipelineInfo{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INFO_KHR,
+        .pipeline = impl().vkPipeline,
+    };
+
+    // Get executables
+    uint32_t execCount = 0;
+    vkGetPipelineExecutablePropertiesKHR_(impl().vkDevice, &pipelineInfo, &execCount, nullptr);
+    std::vector<VkPipelineExecutablePropertiesKHR> execProps(execCount, {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR,
+    });
+    vkGetPipelineExecutablePropertiesKHR_(impl().vkDevice, &pipelineInfo, &execCount, execProps.data());
+
+    for (uint32_t e = 0; e < execCount; ++e)
+    {
+        printf("[EVA] Pipeline executable %u: %s (%s)\n", e, execProps[e].name, execProps[e].description);
+
+        VkPipelineExecutableInfoKHR execInfo{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR,
+            .pipeline = impl().vkPipeline,
+            .executableIndex = e,
+        };
+
+        // Query statistics first
+        if (vkGetPipelineExecutableStatisticsKHR_)
+        {
+            uint32_t statCount = 0;
+            vkGetPipelineExecutableStatisticsKHR_(impl().vkDevice, &execInfo, &statCount, nullptr);
+            if (statCount > 0) {
+                std::vector<VkPipelineExecutableStatisticKHR> stats(statCount, {
+                    .sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_STATISTIC_KHR,
+                });
+                vkGetPipelineExecutableStatisticsKHR_(impl().vkDevice, &execInfo, &statCount, stats.data());
+                for (uint32_t s = 0; s < statCount; ++s) {
+                    printf("  Stat: %s = ", stats[s].name);
+                    switch (stats[s].format) {
+                        case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_BOOL32_KHR:
+                            printf("%s", stats[s].value.b32 ? "true" : "false"); break;
+                        case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_INT64_KHR:
+                            printf("%lld", stats[s].value.i64); break;
+                        case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR:
+                            printf("%llu", stats[s].value.u64); break;
+                        case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_FLOAT64_KHR:
+                            printf("%.4f", stats[s].value.f64); break;
+                        default: printf("?"); break;
+                    }
+                    printf(" (%s)\n", stats[s].description);
+                }
+            }
+        }
+
+        // Get internal representations count
+        uint32_t repCount = 0;
+        VkResult res = vkGetPipelineExecutableInternalRepresentationsKHR_(impl().vkDevice, &execInfo, &repCount, nullptr);
+        printf("  Representations: %u (result=%d)\n", repCount, res);
+
+        if (repCount == 0) continue;
+
+        // First call with pData=nullptr to get sizes
+        std::vector<VkPipelineExecutableInternalRepresentationKHR> reps(repCount, {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INTERNAL_REPRESENTATION_KHR,
+        });
+        vkGetPipelineExecutableInternalRepresentationsKHR_(impl().vkDevice, &execInfo, &repCount, reps.data());
+
+        // Allocate data buffers
+        std::vector<std::vector<char>> repData(repCount);
+        for (uint32_t r = 0; r < repCount; ++r)
+        {
+            repData[r].resize(reps[r].dataSize);
+            reps[r].pData = repData[r].data();
+        }
+
+        // Second call to get data
+        vkGetPipelineExecutableInternalRepresentationsKHR_(impl().vkDevice, &execInfo, &repCount, reps.data());
+
+        for (uint32_t r = 0; r < repCount; ++r)
+        {
+            printf("  [%u] %s (%s) - %zu bytes, text=%s\n",
+                r, reps[r].name, reps[r].description,
+                reps[r].dataSize, reps[r].isText ? "yes" : "no");
+
+            if (outputDir && reps[r].dataSize > 0)
+            {
+                // Build filename: outputDir/exec_name.rep_name.txt (or .bin)
+                std::string filename = std::string(outputDir) + "/" +
+                    execProps[e].name + "." + reps[r].name +
+                    (reps[r].isText ? ".txt" : ".bin");
+
+                // Sanitize filename (replace spaces with underscores)
+                for (auto& c : filename)
+                    if (c == ' ') c = '_';
+
+                FILE* f = fopen(filename.c_str(), reps[r].isText ? "w" : "wb");
+                if (f)
+                {
+                    fwrite(repData[r].data(), 1, reps[r].dataSize, f);
+                    fclose(f);
+                    printf("    -> Saved to %s\n", filename.c_str());
+                }
+            }
+            else if (!outputDir && reps[r].isText && reps[r].dataSize > 0 && reps[r].dataSize < 4096)
+            {
+                // Print small text representations to stdout
+                printf("--- %s ---\n%.*s\n---\n", reps[r].name, (int)reps[r].dataSize, repData[r].data());
+            }
+        }
+    }
 }
 
 
