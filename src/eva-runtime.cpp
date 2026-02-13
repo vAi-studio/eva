@@ -12,6 +12,10 @@
     #ifndef VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME
     #define VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME "VK_KHR_external_memory_fd"
     #endif
+    #ifndef VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME
+    #define VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME "VK_EXT_external_memory_dma_buf"
+    #endif
+    #include <unistd.h>  // dup(), close() for DMA-BUF fd handling
 #endif
 
 #ifdef EVA_ENABLE_WINDOW
@@ -987,6 +991,10 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         reqExtentions.push_back(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME);
 #else
         reqExtentions.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+        // DMA-BUF extension for Linux zero-copy with V4L2/DRM/RKNN
+        if (deviceSupportsExtensions(pd, {VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME})) {
+            reqExtentions.push_back(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
+        }
 #endif
     }
 
@@ -2950,6 +2958,91 @@ Buffer Device::importExternalBuffer(
 
     return *impl().buffers.insert(new Buffer::Impl*(pImpl)).first;
 }
+
+#ifndef _WIN32
+Buffer Device::importDmaBufBuffer(
+    int dmaBufFd,
+    uint64_t size,
+    BUFFER_USAGE usage,
+    MEMORY_PROPERTY memProps)
+{
+    // Create buffer with external memory support
+    VkExternalMemoryBufferCreateInfo extBufInfo{
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
+        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT
+    };
+
+    VkBufferCreateInfo bufferInfo{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .pNext = &extBufInfo,
+        .size = size,
+        .usage = (VkBufferUsageFlags)usage,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE
+    };
+
+    VkBuffer vkBuffer;
+    ASSERT_SUCCESS(vkCreateBuffer(impl().vkDevice, &bufferInfo, nullptr, &vkBuffer));
+
+    // Get memory requirements
+    VkMemoryRequirements memReq;
+    vkGetBufferMemoryRequirements(impl().vkDevice, vkBuffer, &memReq);
+
+    // Find suitable memory type
+    VkPhysicalDeviceMemoryProperties memProps_;
+    vkGetPhysicalDeviceMemoryProperties(impl().vkPhysicalDevice, &memProps_);
+
+    uint32_t memTypeIndex = UINT32_MAX;
+    for (uint32_t i = 0; i < memProps_.memoryTypeCount; i++) {
+        if (memReq.memoryTypeBits & (1 << i)) {
+            memTypeIndex = i;
+            break;
+        }
+    }
+    EVA_ASSERT(memTypeIndex != UINT32_MAX);
+
+    // Import DMA-BUF fd (dup the fd as Vulkan takes ownership)
+    int importFd = dup(dmaBufFd);
+    EVA_ASSERT(importFd >= 0);
+
+    VkImportMemoryFdInfoKHR importInfo{
+        .sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR,
+        .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+        .fd = importFd
+    };
+
+    VkMemoryAllocateInfo allocInfo{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .pNext = &importInfo,
+        .allocationSize = memReq.size,
+        .memoryTypeIndex = memTypeIndex
+    };
+
+    VkDeviceMemory vkMemory;
+    VkResult result = vkAllocateMemory(impl().vkDevice, &allocInfo, nullptr, &vkMemory);
+    if (result != VK_SUCCESS) {
+        close(importFd);
+        vkDestroyBuffer(impl().vkDevice, vkBuffer, nullptr);
+        EVA_ASSERT(false && "vkAllocateMemory failed for DMA-BUF import");
+    }
+
+    // Bind buffer to imported memory
+    ASSERT_SUCCESS(vkBindBufferMemory(impl().vkDevice, vkBuffer, vkMemory, 0));
+
+    // Create Buffer::Impl - ownsMemory = true because we created the Vulkan resources
+    auto pImpl = new Buffer::Impl(
+        impl().vkDevice,
+        vkBuffer,
+        vkMemory,
+        size,
+        usage,
+        memProps,
+        memProps,
+        true  // ownsMemory = true (we own the Vulkan buffer/memory, but fd is external)
+    );
+
+    return *impl().buffers.insert(new Buffer::Impl*(pImpl)).first;
+}
+#endif
 
 uint8_t* Buffer::map(uint64_t offset, uint64_t size)
 {

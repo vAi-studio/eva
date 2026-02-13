@@ -309,6 +309,18 @@ public:
         MEMORY_PROPERTY memProps = MEMORY_PROPERTY::DEVICE_LOCAL
     );
 
+#ifndef _WIN32
+    // Import DMA-BUF fd for zero-copy interop (Linux: V4L2, DRM, RKNN, etc.)
+    // The fd is duplicated internally; caller retains ownership of the original fd
+    // Returns a Buffer that can be used for GPU compute operations
+    Buffer importDmaBufBuffer(
+        int dmaBufFd,
+        uint64_t size,
+        BUFFER_USAGE usage,
+        MEMORY_PROPERTY memProps = MEMORY_PROPERTY::DEVICE_LOCAL
+    );
+#endif
+
     Image createImage(const ImageCreateInfo& info);
     Sampler createSampler(const SamplerCreateInfo& info);
     DescriptorSetLayout createDescriptorSetLayout(DescriptorSetLayoutDesc desc); // call-by-value is ok because at least one copy is necessary for lvalue
