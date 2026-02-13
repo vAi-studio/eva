@@ -991,7 +991,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         reqExtentions.push_back(VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME);
 #ifdef _WIN32
         reqExtentions.push_back(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME);
-#else
+#elif defined(__linux__)
         reqExtentions.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
         // DMA-BUF extension for Linux zero-copy with V4L2/DRM/RKNN
         if (deviceSupportsExtensions(pd, {VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME})) {
@@ -2967,7 +2967,7 @@ Buffer Device::importExternalBuffer(
     return *impl().buffers.insert(new Buffer::Impl*(pImpl)).first;
 }
 
-#ifndef _WIN32
+#ifdef __linux__
 Buffer Device::importDmaBufBuffer(
     int dmaBufFd,
     uint64_t size,
@@ -3050,7 +3050,7 @@ Buffer Device::importDmaBufBuffer(
 
     return *impl().buffers.insert(new Buffer::Impl*(pImpl)).first;
 }
-#endif
+#endif // __linux__
 
 uint8_t* Buffer::map(uint64_t offset, uint64_t size)
 {

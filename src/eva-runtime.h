@@ -312,7 +312,7 @@ public:
         MEMORY_PROPERTY memProps = MEMORY_PROPERTY::DEVICE_LOCAL
     );
 
-#ifndef _WIN32
+#ifdef __linux__
     // Import DMA-BUF fd for zero-copy interop (Linux: V4L2, DRM, RKNN, etc.)
     // The fd is duplicated internally; caller retains ownership of the original fd
     // Returns a Buffer that can be used for GPU compute operations
