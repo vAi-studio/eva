@@ -288,6 +288,7 @@ struct Device::Impl {
     // const VkInstance vkInstance;
     const Runtime& parent;
     const DeviceSettings settings;
+    bool hasShaderAtomicFloat = false;
 
     std::set<CommandPool::Impl**> cmdPools;
     std::set<Fence::Impl**> fences;
@@ -951,7 +952,8 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     std::vector<const char*> reqExtentions = {};
 
     // VK_EXT_shader_atomic_float is optional - only add if supported
-    if (deviceSupportsExtensions(pd, {VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME}))
+    bool shaderAtomicFloatSupported = deviceSupportsExtensions(pd, {VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME});
+    if (shaderAtomicFloatSupported)
     {
         reqExtentions.push_back(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME);
     }
@@ -1226,6 +1228,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         qfIndex[queue_transfer],
         std::move(queues)
     );
+    pImpl->hasShaderAtomicFloat = shaderAtomicFloatSupported;
 
 #ifdef EVA_ENABLE_RAYTRACING
     if (settings.enableRaytracing)
@@ -1320,6 +1323,11 @@ VkDevice Device::vkDevice() const
 VkPhysicalDevice Device::vkPhysicalDevice() const
 {
     return impl().vkPhysicalDevice;
+}
+
+bool Device::hasShaderAtomicFloat() const
+{
+    return impl().hasShaderAtomicFloat;
 }
 
 void Device::reportGPUQueueFamilies() const

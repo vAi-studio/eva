@@ -271,6 +271,9 @@ public:
     VkDevice vkDevice() const;
     VkPhysicalDevice vkPhysicalDevice() const;
 
+    // Extension capability queries
+    bool hasShaderAtomicFloat() const;
+
     void reportGPUQueueFamilies() const;
     void reportAssignedQueues() const;    
 
