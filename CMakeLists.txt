@@ -139,9 +139,10 @@ if(EVA_GLSLC)
 
         set(SHADER_FILES)
         foreach(SRC ${TARGET_SOURCES})
-        message(STATUS "[EVA] Checking source file: ${SRC}")
+        # message(STATUS "[EVA] Checking source file: ${SRC}")
             get_filename_component(EXT ${SRC} LAST_EXT)
             if(EXT IN_LIST SHADER_EXTENSIONS)
+                message(STATUS "[EVA] Found shader file: ${SRC}")
                 list(APPEND SHADER_FILES ${SRC})
             endif()
         endforeach()
@@ -208,7 +209,7 @@ function(eva_compile_shaders)
 
         add_custom_command(
             OUTPUT ${SHADER_OUTPUT}
-            COMMAND ${EVA_GLSLC} --target-env=vulkan1.2 -o ${SHADER_OUTPUT} ${SHADER_SOURCE_ABS}
+            COMMAND ${EVA_GLSLC} --target-env=vulkan1.3 -o ${SHADER_OUTPUT} ${SHADER_SOURCE_ABS}
             DEPENDS ${SHADER_SOURCE_ABS}
             COMMENT "[EVA] Compiling shader: ${SHADER_NAME} -> ${SHADER_NAME}.spv"
             VERBATIM
@@ -222,12 +223,15 @@ function(eva_compile_shaders)
         file(MAKE_DIRECTORY ${ARG_OUTPUT_DIR})
     endif()
 
-    # Create custom target
-    set(SHADER_TARGET "${ARG_TARGET}_shaders")
-    add_custom_target(${SHADER_TARGET} DEPENDS ${SHADER_OUTPUTS})
+    # # Create custom target (custom_target  -> .spv) 
+    # set(SHADER_TARGET "${ARG_TARGET}_shaders")
+    # add_custom_target(${SHADER_TARGET} DEPENDS ${SHADER_OUTPUTS})
 
-    # Add dependency to main target
-    add_dependencies(${ARG_TARGET} ${SHADER_TARGET})
+    # # Add dependency to main target (.exe/lib -> custom_target )
+    # add_dependencies(${ARG_TARGET} ${SHADER_TARGET})
+
+    # Add compiled shader outputs to target sources (.exe/lib -> .spv)
+    target_sources(${ARG_TARGET} PRIVATE ${SHADER_OUTPUTS})
 
     message(STATUS "[EVA] Configured shader compilation for target: ${ARG_TARGET}")
 endfunction()
@@ -236,10 +240,11 @@ endfunction()
 ################################################################################
 # Samples
 ################################################################################
-if(EVA_BUILD_SAMPLES AND 
-EVA_ENABLE_RAYTRACING AND 
-EVA_ENABLE_WINDOW)
+if(EVA_BUILD_SAMPLES)
     message(STATUS "[EVA] Building sample projects...")
-    add_subdirectory(samples/raytracing)
+    add_subdirectory(samples/matmul)
+    if(EVA_ENABLE_RAYTRACING AND EVA_ENABLE_WINDOW)
+        add_subdirectory(samples/raytracing)
+    endif()
     message(STATUS "[EVA] Sample projects build configuration completed.")
 endif()

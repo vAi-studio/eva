@@ -508,7 +508,8 @@ struct Buffer::Impl {
     , usage(usage)
     , reqMemProps(reqMemProps)
     , memProps(memProps) {}
-    ~Impl() {                           
+    ~Impl() {         
+        if (mapped) vkUnmapMemory(vkDevice, vkMemory);
         vkDestroyBuffer(vkDevice, vkBuffer, nullptr); 
         vkFreeMemory(vkDevice, vkMemory, nullptr); 
     }
@@ -887,7 +888,10 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     auto qfProps = arrayFrom(vkGetPhysicalDeviceQueueFamilyProperties, pd);
     
     std::vector<const char*> reqExtentions = {
-        VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME
+        VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME,
+        VK_EXT_ROBUSTNESS_2_EXTENSION_NAME,
+        VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME,
+        VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME
     };
 
 #ifdef EVA_ENABLE_WINDOW
@@ -1081,6 +1085,16 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT,
             .shaderBufferFloat32AtomicAdd = VK_TRUE,
             //.shaderSharedFloat32AtomicAdd = VK_TRUE,
+        });
+
+        chain.add(VkPhysicalDeviceRobustness2FeaturesEXT{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
+            .nullDescriptor = VK_TRUE,
+        });
+
+        chain.add(VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT,
+            .graphicsPipelineLibrary = VK_TRUE,
         });
 
 #ifdef EVA_ENABLE_RAYTRACING
@@ -1650,19 +1664,19 @@ CommandBuffer CommandBuffer::bindPipeline(Pipeline pipeline)
 }
 
 CommandBuffer CommandBuffer::bindDescSets(
-    PipelineLayout layout, 
+    PipelineLayout layout,
     PIPELINE_BIND_POINT bindPoint,
     std::vector<DescriptorSet> descSets,
     uint32_t firstSet)
 {
     std::vector<VkDescriptorSet> vkDescSets(descSets.size());
-    for (uint32_t i = 0; i < descSets.size(); ++i) 
-        vkDescSets[i] = descSets[i].impl().vkDescSet;
+    for (uint32_t i = 0; i < descSets.size(); ++i)
+        vkDescSets[i] = descSets[i] ? descSets[i].impl().vkDescSet : VK_NULL_HANDLE;
 
     vkCmdBindDescriptorSets(
-        impl().vkCmdBuffer, (VkPipelineBindPoint)(uint32_t)bindPoint, 
-        layout.impl().vkPipeLayout, firstSet, 
-        (uint32_t)vkDescSets.size(), vkDescSets.data(), 
+        impl().vkCmdBuffer, (VkPipelineBindPoint)(uint32_t)bindPoint,
+        layout.impl().vkPipeLayout, firstSet,
+        (uint32_t)vkDescSets.size(), vkDescSets.data(),
         0, nullptr);
     return *this;
 }
@@ -1672,8 +1686,8 @@ CommandBuffer CommandBuffer::bindDescSets(
     uint32_t firstSet)
 {
     std::vector<VkDescriptorSet> vkDescSets(descSets.size());
-    for (uint32_t i = 0; i < descSets.size(); ++i) 
-        vkDescSets[i] = descSets[i].impl().vkDescSet;
+    for (uint32_t i = 0; i < descSets.size(); ++i)
+        vkDescSets[i] = descSets[i] ? descSets[i].impl().vkDescSet : VK_NULL_HANDLE;
 
     auto index = impl().boundPipeline.index();
     VkPipelineBindPoint bindPoint;
@@ -2890,14 +2904,25 @@ Buffer Device::createBuffer(const BufferCreateInfo& info)
 uint8_t* Buffer::map(uint64_t offset, uint64_t size)
 {
     EVA_ASSERT(*this);
-    EVA_ASSERT(!impl().mapped);                                         // VUID-vkMapMemory-memory-00678        
     EVA_ASSERT((uint32_t)impl().memProps & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);  // VUID-vkMapMemory-memory-00682
     EVA_ASSERT(offset < impl().size);                                   // VUID-vkMapMemory-offset-00679
-    EVA_ASSERT(size == EVA_WHOLE_SIZE || offset + size <= impl().size);  // VUID-vkMapMemory-size-00681
+    
+    if (size == EVA_WHOLE_SIZE)
+        size = impl().size - offset;
+    else
+        EVA_ASSERT(offset + size <= impl().size);  // VUID-vkMapMemory-size-00681
+
+    if (impl().mapped)
+    {
+        if (impl().mappedOffset != offset || impl().mappedSize != size)
+            vkUnmapMemory(impl().vkDevice, impl().vkMemory);
+        else
+            return impl().mapped;
+    }
 
     ASSERT_SUCCESS(vkMapMemory(impl().vkDevice, impl().vkMemory, offset, size, 0, (void**)&impl().mapped));
     impl().mappedOffset = offset;
-    impl().mappedSize = size == EVA_WHOLE_SIZE ? impl().size : size;
+    impl().mappedSize = size;
     return impl().mapped;
 }
 
@@ -2935,7 +2960,9 @@ void Buffer::invalidate(uint64_t offset, uint64_t size) const
 
 void Buffer::unmap()
 {
-    EVA_ASSERT(impl().mapped); // VUID-vkUnmapMemory-memory-00689
+    if (!impl().mapped)  // avoid VUID-vkUnmapMemory-memory-00689
+        return;
+
     EVA_ASSERT((uint32_t)impl().memProps & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
 
     vkUnmapMemory(impl().vkDevice, impl().vkMemory);
@@ -3262,6 +3289,12 @@ std::vector<DescriptorSet> DescriptorPool::operator()(std::vector<DescriptorSetL
 /////////////////////////////////////////////////////////////////////////////////////////
 // DescriptorSet
 /////////////////////////////////////////////////////////////////////////////////////////
+/*
+* If the nullDescriptor feature is enabled, the buffer, acceleration structure, imageView, or
+* bufferView can be VK_NULL_HANDLE. Loads from a null descriptor return zero values and stores
+* and atomics to a null descriptor are discarded. A null acceleration structure descriptor results in
+* the miss shader being invoked.
+*/
 DescriptorSet DescriptorSet::write(
     std::vector<Descriptor> descriptors, 
     uint32_t startBindingId, 
@@ -3341,11 +3374,11 @@ DescriptorSet DescriptorSet::write(
             {
                 // bufferInfos.push_back(std::get<BufferDescriptor>(descriptors[consumedDescriptors + i]).descInfo());
                 auto& desc = std::get<BufferDescriptor>(descriptors[consumedDescriptors + i]);
-                bufferInfos.push_back(VkDescriptorBufferInfo{
-                    .buffer = desc.buffer.impl().vkBuffer,
-                    .offset = desc.offset,
-                    .range = desc.size
-                }); // TODO: Clang 호환성 - emplace_back → push_back + designated initializer
+                bufferInfos.emplace_back(
+                    desc.buffer ? desc.buffer.impl().vkBuffer : VK_NULL_HANDLE,
+                    desc.offset,
+                    desc.size
+                );
             }
         }
         
@@ -3383,7 +3416,7 @@ DescriptorSet DescriptorSet::write(
             for (uint32_t i = 0; i < consecutiveDescCount; ++i)
             {
                 auto& as = std::get<AccelerationStructure>(descriptors[consumedDescriptors + i]);
-                asArray.push_back(as.impl().vkAccelStruct);
+                asArray.push_back(as ? as.impl().vkAccelStruct : VK_NULL_HANDLE);
             }
         }
 #endif
