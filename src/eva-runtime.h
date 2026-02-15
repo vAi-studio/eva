@@ -68,6 +68,7 @@ class DescriptorSet;
 class Window;
 class RaytracingPipeline;
 class AccelerationStructure;
+class QueryPool;
 
 
 #define VULKAN_FRIENDS \
@@ -91,6 +92,7 @@ class AccelerationStructure;
     friend class DescriptorSet; \
     friend class Window; \
     friend class AccelerationStructure; \
+    friend class QueryPool; \
     friend class Submitting;
 
 
@@ -221,6 +223,29 @@ struct DeviceSettings {
 };
 
 
+struct DeviceCapabilities {
+    // Basic info
+    std::string deviceName;
+    bool isDiscreteGpu;
+
+    // Compute limits
+    uint32_t maxWorkgroupSize[3];
+    uint32_t maxWorkgroupInvocations;
+    uint32_t maxSharedMemorySize;
+
+    // Subgroup
+    uint32_t subgroupSize;
+    uint32_t subgroupOperations;  // bitmask of supported operations
+
+    // Optional feature support
+    bool supportsAtomicFloat;         // shaderBufferFloat32AtomicAdd
+    bool supportsAtomicFloatShared;   // shaderSharedFloat32AtomicAdd
+
+    // Memory
+    uint64_t deviceLocalMemorySize;
+};
+
+
 enum QueueType {
     queue_graphics, 
     queue_compute, 
@@ -263,6 +288,7 @@ class Device {
 public:
     void reportGPUQueueFamilies() const;
     void reportAssignedQueues() const;
+    const DeviceCapabilities& capabilities() const;
 
     uint32_t queueCount(QueueType type) const;
     bool supportPresent(QueueType type) const;
@@ -290,6 +316,10 @@ public:
     DescriptorSetLayout createDescriptorSetLayout(DescriptorSetLayoutDesc desc); // call-by-value is ok because at least one copy is necessary for lvalue
     PipelineLayout createPipelineLayout(PipelineLayoutDesc desc);
     DescriptorPool createDescriptorPool(const DescriptorPoolCreateInfo& info);
+
+    // Query Pool for timestamp queries
+    QueryPool createQueryPool(uint32_t queryCount);
+    bool supportsTimestampQueries() const;
 
 #ifdef EVA_ENABLE_RAYTRACING
     RaytracingPipeline createRaytracingPipeline(const RaytracingPipelineCreateInfo& info);
@@ -417,16 +447,23 @@ public:
     );
 
 	CommandBuffer copyBuffer(
-        Buffer src, 
-        Buffer dst, 
-        uint64_t srcOffset = 0, 
-        uint64_t dstOffset = 0, 
+        Buffer src,
+        Buffer dst,
+        uint64_t srcOffset = 0,
+        uint64_t dstOffset = 0,
         uint64_t size = EVA_WHOLE_SIZE
     );
 
     CommandBuffer copyBuffer(
         BufferRange src,
-        BufferRange dst 
+        BufferRange dst
+    );
+
+    CommandBuffer fillBuffer(
+        Buffer dst,
+        uint32_t data = 0,
+        uint64_t dstOffset = 0,
+        uint64_t size = EVA_WHOLE_SIZE
     );
 
     CommandBuffer copyImage(
@@ -458,6 +495,10 @@ public:
         uint32_t numThreadsInY=1,
         uint32_t numThreadsInZ=1
     );
+
+    // Timestamp queries
+    CommandBuffer resetQueryPool(QueryPool pool, uint32_t firstQuery = 0, uint32_t queryCount = 0);
+    CommandBuffer writeTimestamp(PIPELINE_STAGE stage, QueryPool pool, uint32_t query);
 
 #ifdef EVA_ENABLE_RAYTRACING
     CommandBuffer traceRays(
@@ -527,12 +568,27 @@ public:
 class GraphicsPipeline {};
 
 
+class QueryPool {
+    VULKAN_CLASS_COMMON2(QueryPool)
+public:
+    // Get timestamp results (returns timestamps in device ticks)
+    std::vector<uint64_t> getResults(uint32_t firstQuery, uint32_t queryCount = 0);
+
+    // Get elapsed time between two timestamps in milliseconds
+    double getElapsedMs(uint32_t startQuery, uint32_t endQuery);
+
+    // Get query count
+    uint32_t queryCount() const;
+};
+
+
 class ComputePipeline {
     VULKAN_CLASS_COMMON2(ComputePipeline)
 public:
 
     PipelineLayout layout() const;
     DescriptorSetLayout descSetLayout(uint32_t setId=0) const;
+    uint32_t pushConstantSize() const;
 };
 
 
@@ -616,6 +672,7 @@ class PipelineLayout {
 public:
 
     DescriptorSetLayout descSetLayout(uint32_t setId) const;
+    uint32_t pushConstantSize() const;
 };
 
 
