@@ -971,6 +971,19 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     printf("        Atomic Float (shaderBufferFloat32AtomicAdd): %s\n", supportsAtomicFloat ? "Supported" : "Not Supported");
     fflush(stdout);
 
+    // LocalSizeId in SPIR-V requires maintenance4 feature enabled.
+    VkPhysicalDeviceMaintenance4Features maintenance4Features{};
+    maintenance4Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES;
+    {
+        VkPhysicalDeviceFeatures2 features2{};
+        features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features2.pNext = &maintenance4Features;
+        vkGetPhysicalDeviceFeatures2(pd, &features2);
+    }
+    if (!maintenance4Features.maintenance4) {
+        throw std::runtime_error("The selected physical device does not support maintenance4 (required by LocalSizeId shaders).");
+    }
+
     // Required extensions
     std::vector<const char*> reqExtentions = {
         VK_EXT_ROBUSTNESS_2_EXTENSION_NAME
@@ -1167,6 +1180,11 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         chain.add(VkPhysicalDeviceSynchronization2Features{
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES,
             .synchronization2 = VK_TRUE,
+        });
+
+        chain.add(VkPhysicalDeviceMaintenance4Features{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES,
+            .maintenance4 = VK_TRUE,
         });
 
         chain.add(VkPhysicalDeviceRobustness2FeaturesEXT{
