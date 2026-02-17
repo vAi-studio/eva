@@ -896,9 +896,21 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     VkPhysicalDevice pd = physicalDevices[selected];
     auto qfProps = arrayFrom(vkGetPhysicalDeviceQueueFamilyProperties, pd);
     
-    std::vector<const char*> reqExtentions = {
-        VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME
-    };
+    auto deviceExtensions = arrayFrom(vkEnumerateDeviceExtensionProperties, pd, nullptr);
+    bool shader_atomic_float_supported = std::any_of(deviceExtensions.begin(), deviceExtensions.end(),
+        [](const auto& props) {
+            return strcmp(props.extensionName, VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME) == 0;
+        });
+
+    std::vector<const char*> reqExtentions = {};
+    if (shader_atomic_float_supported)
+    {
+        reqExtentions.push_back(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME);
+    }
+    else
+    {
+        printf("[EVA] VK_EXT_shader_atomic_float is not supported on this device. Atomic float path disabled.\n");
+    }
 
 #ifdef EVA_ENABLE_WINDOW
     if (settings.enableWindow)
@@ -941,7 +953,6 @@ Device Runtime::createDevice(const DeviceSettings& settings)
 #endif
 
         // Check if VK_NV_cooperative_matrix2 extension is available
-        auto deviceExtensions = arrayFrom(vkEnumerateDeviceExtensionProperties, pd, nullptr);
         bool coopmat2_ext_available = std::any_of(deviceExtensions.begin(), deviceExtensions.end(),
             [](const auto& props) {
                 return strcmp(props.extensionName, "VK_NV_cooperative_matrix2") == 0;
@@ -1162,11 +1173,14 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             .synchronization2 = VK_TRUE,
         });
     
-        chain.add(VkPhysicalDeviceShaderAtomicFloatFeaturesEXT{
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT,
-            .shaderBufferFloat32AtomicAdd = VK_TRUE,
-            //.shaderSharedFloat32AtomicAdd = VK_TRUE,
-        });
+        if (shader_atomic_float_supported)
+        {
+            chain.add(VkPhysicalDeviceShaderAtomicFloatFeaturesEXT{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT,
+                .shaderBufferFloat32AtomicAdd = VK_TRUE,
+                //.shaderSharedFloat32AtomicAdd = VK_TRUE,
+            });
+        }
 
         // @chay116 2025/12/21 - Enable 16-bit storage for FP16 weight shaders
         chain.add(VkPhysicalDeviceVulkan11Features{
