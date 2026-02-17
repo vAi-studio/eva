@@ -569,10 +569,9 @@ class Buffer {
     uint64_t _cachedSize = 0;
     BUFFER_USAGE _cachedUsage = {};
     // @chay116 - END
+public:
     void* nativeBuffer() const;
     void* nativeMemory() const;
-
-public:
 
     uint8_t* map(
         uint64_t offset=0,
