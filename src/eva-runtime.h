@@ -46,6 +46,9 @@ typedef uint32_t SampleMask;
 // Query if VK_NV_cooperative_matrix2 extension was enabled
 bool isCoopMat2Supported();
 
+// Query if VK_NV_cuda_kernel_launch extension was enabled
+bool isCudaKernelLaunchSupported();
+
 class Runtime;
 class Device;
 class Queue;
@@ -197,6 +200,7 @@ struct DeviceSettings {
 #endif
     bool enableCooperativeMatrix = false;  // VK_KHR/NV cooperative matrix for Tensor Core
     bool enablePipelineExecutableInfo = false;  // VK_KHR_pipeline_executable_properties for SASS dump
+    bool enableCudaKernelLaunch = false;  // VK_NV_cuda_kernel_launch for CUDA PTX kernels in Vulkan
     // bool operator==(const DeviceSettings&) const = default;
     bool operator<=(const DeviceSettings& other) const {
         return (!enableGraphicsQueues || other.enableGraphicsQueues) &&
@@ -210,6 +214,7 @@ struct DeviceSettings {
 #endif
                && (!enableCooperativeMatrix || other.enableCooperativeMatrix)
                && (!enablePipelineExecutableInfo || other.enablePipelineExecutableInfo)
+               && (!enableCudaKernelLaunch || other.enableCudaKernelLaunch)
                ;
     }
 };

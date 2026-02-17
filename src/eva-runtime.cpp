@@ -38,6 +38,9 @@
 namespace eva {
     static bool gCoopMat2Supported = false;
     bool isCoopMat2Supported() { return gCoopMat2Supported; }
+
+    static bool gCudaKernelLaunchSupported = false;
+    bool isCudaKernelLaunchSupported() { return gCudaKernelLaunchSupported; }
 }
 
 std::vector<const char*> getRequiredInstanceExtensions()
@@ -1013,6 +1016,53 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         printf("[EVA] VK_KHR_pipeline_executable_properties enabled\n");
     }
 
+    // VK_NV_cuda_kernel_launch for CUDA PTX kernels in Vulkan command buffers
+    bool cuda_kernel_launch_supported = false;
+    if (settings.enableCudaKernelLaunch)
+    {
+        // Check if extension is available
+        auto deviceExtensions_cuda = arrayFrom(vkEnumerateDeviceExtensionProperties, pd, nullptr);
+        bool cuda_ext_available = std::any_of(deviceExtensions_cuda.begin(), deviceExtensions_cuda.end(),
+            [](const auto& props) {
+                return strcmp(props.extensionName, "VK_NV_cuda_kernel_launch") == 0;
+            });
+
+        if (cuda_ext_available)
+        {
+            // Query feature support
+            // Define struct manually to avoid vulkan_beta.h dependency
+            struct VkPhysicalDeviceCudaKernelLaunchFeaturesNV_t {
+                VkStructureType sType;
+                void* pNext;
+                VkBool32 cudaKernelLaunchFeatures;
+            };
+            // VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUDA_KERNEL_LAUNCH_FEATURES_NV = 1000307003
+            VkPhysicalDeviceCudaKernelLaunchFeaturesNV_t cuda_features{};
+            cuda_features.sType = (VkStructureType)1000307003;
+            cuda_features.pNext = nullptr;
+
+            VkPhysicalDeviceFeatures2 features2_cuda{};
+            features2_cuda.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            features2_cuda.pNext = &cuda_features;
+            vkGetPhysicalDeviceFeatures2(pd, &features2_cuda);
+
+            if (cuda_features.cudaKernelLaunchFeatures)
+            {
+                reqExtentions.push_back("VK_NV_cuda_kernel_launch");
+                cuda_kernel_launch_supported = true;
+                printf("[EVA] VK_NV_cuda_kernel_launch enabled (cudaKernelLaunchFeatures supported)\n");
+            }
+            else
+            {
+                printf("[EVA] VK_NV_cuda_kernel_launch available but cudaKernelLaunchFeatures not supported\n");
+            }
+        }
+        else
+        {
+            printf("[EVA] VK_NV_cuda_kernel_launch not available on this device\n");
+        }
+    }
+
     if (!deviceSupportsExtensions(pd, reqExtentions))
     {
         throw std::runtime_error("The selected physical device does not support the required extensions.");
@@ -1261,6 +1311,24 @@ Device Runtime::createDevice(const DeviceSettings& settings)
                 .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR,
                 .pipelineExecutableInfo = VK_TRUE,
             });
+        }
+
+        // VK_NV_cuda_kernel_launch for CUDA PTX kernels
+        if (cuda_kernel_launch_supported)
+        {
+            // VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUDA_KERNEL_LAUNCH_FEATURES_NV = 1000307003
+            struct CudaKernelLaunchFeatures {
+                VkStructureType sType;
+                void* pNext;
+                VkBool32 cudaKernelLaunchFeatures;
+            };
+            CudaKernelLaunchFeatures cuda_feat{};
+            cuda_feat.sType = (VkStructureType)1000307003;
+            cuda_feat.pNext = nullptr;
+            cuda_feat.cudaKernelLaunchFeatures = VK_TRUE;
+            chain.add(cuda_feat);
+
+            eva::gCudaKernelLaunchSupported = true;
         }
     }
 
