@@ -1413,6 +1413,15 @@ Device::Impl::~Impl()
 
 void* Device::nativeDevice() const { return impl().vkDevice; }
 void* Device::nativePhysicalDevice() const { return impl().vkPhysicalDevice; }
+VkDevice Device::vkDevice() const { return impl().vkDevice; }
+VkPhysicalDevice Device::vkPhysicalDevice() const { return impl().vkPhysicalDevice; }
+bool Device::hasShaderAtomicFloat() const
+{
+    auto deviceExtensions = arrayFrom(vkEnumerateDeviceExtensionProperties, impl().vkPhysicalDevice, nullptr);
+    return std::any_of(deviceExtensions.begin(), deviceExtensions.end(), [](const auto& props) {
+        return strcmp(props.extensionName, VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME) == 0;
+    });
+}
 
 void Device::reportGPUQueueFamilies() const
 {
@@ -3287,6 +3296,16 @@ void Buffer::unmap()
 MEMORY_PROPERTY Buffer::memoryProperties() const
 {
     return impl().memProps;
+}
+
+VkBuffer Buffer::vkBuffer() const
+{
+    return impl().vkBuffer;
+}
+
+VkDeviceMemory Buffer::vkMemory() const
+{
+    return impl().vkMemory;
 }
 
 DeviceAddress Buffer::deviceAddress() const

@@ -258,6 +258,9 @@ class Device {
 public:
     void* nativeDevice() const;
     void* nativePhysicalDevice() const;
+    VkDevice vkDevice() const;
+    VkPhysicalDevice vkPhysicalDevice() const;
+    bool hasShaderAtomicFloat() const;
 
     void reportGPUQueueFamilies() const;
     void reportAssignedQueues() const;
@@ -568,6 +571,8 @@ class Buffer {
     uint64_t _cachedSize = 0;
     BUFFER_USAGE _cachedUsage = {};
     // @chay116 - END
+    VkBuffer vkBuffer() const;
+    VkDeviceMemory vkMemory() const;
 
 public:
 
