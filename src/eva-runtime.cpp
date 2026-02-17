@@ -929,10 +929,16 @@ Device Runtime::createDevice(const DeviceSettings& settings)
 
     // VK_KHR_cooperative_matrix for Tensor Core GEMM
     // VK_NV_cooperative_matrix2 for tensor operations (llama.cpp style)
+    bool cooperative_matrix_supported = false;
     bool coopmat2_supported = false;
     if (settings.enableCooperativeMatrix)
     {
+#ifdef VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME
         reqExtentions.push_back(VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);
+        cooperative_matrix_supported = true;
+#else
+        printf("[EVA] VK_KHR_cooperative_matrix is not available in this Vulkan SDK/headers. Cooperative matrix disabled.\n");
+#endif
 
         // Check if VK_NV_cooperative_matrix2 extension is available
         auto deviceExtensions = arrayFrom(vkEnumerateDeviceExtensionProperties, pd, nullptr);
@@ -941,6 +947,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
                 return strcmp(props.extensionName, "VK_NV_cooperative_matrix2") == 0;
             });
 
+#ifdef VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_2_FEATURES_NV
         if (coopmat2_ext_available)
         {
             // Query coopmat2 features (llama.cpp style)
@@ -980,6 +987,12 @@ Device Runtime::createDevice(const DeviceSettings& settings)
                     coopmat2_features.cooperativeMatrixBlockLoads);
             }
         }
+#else
+        if (coopmat2_ext_available)
+        {
+            printf("[EVA] VK_NV_cooperative_matrix2 extension is present but feature structs are unavailable in current Vulkan headers. coopmat2 disabled.\n");
+        }
+#endif
     }
 
     // VK_KHR_pipeline_executable_properties for SASS dump
@@ -1192,17 +1205,22 @@ Device Runtime::createDevice(const DeviceSettings& settings)
 #endif
 
         // VK_KHR_cooperative_matrix for Tensor Core GEMM
-        if (settings.enableCooperativeMatrix)
+        if (settings.enableCooperativeMatrix && cooperative_matrix_supported)
         {
+#ifdef VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR
             chain.add(VkPhysicalDeviceCooperativeMatrixFeaturesKHR{
                 .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR,
                 .cooperativeMatrix = VK_TRUE,
             });
+#else
+            printf("[EVA] VkPhysicalDeviceCooperativeMatrixFeaturesKHR is unavailable in current Vulkan headers. Cooperative matrix disabled.\n");
+#endif
 
             // VK_NV_cooperative_matrix2 for tensor operations (coopMatLoadTensorNV etc.)
             // Enable all features if supported (detected in extension query phase)
             if (coopmat2_supported)
             {
+#ifdef VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_2_FEATURES_NV
                 chain.add(VkPhysicalDeviceCooperativeMatrix2FeaturesNV{
                     .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_2_FEATURES_NV,
                     .cooperativeMatrixWorkgroupScope = VK_TRUE,
@@ -1216,6 +1234,9 @@ Device Runtime::createDevice(const DeviceSettings& settings)
 
                 // Set global flag for runtime query
                 eva::gCoopMat2Supported = true;
+#else
+                printf("[EVA] coopmat2 features are unavailable in current Vulkan headers. coopmat2 disabled.\n");
+#endif
             }
         }
 
@@ -2677,7 +2698,10 @@ ComputePipeline Device::createComputePipeline(const ComputePipelineCreateInfo& i
     } else {
         // Use SPIRV-Reflect for workgroup size and optionally layout
         EVA_ASSERT(csModule.hasReflect());
-        std::tie(sizeX, sizeY, sizeZ) = extractWorkGroupSize(csModule.impl().pModule);
+        auto wgSize = extractWorkGroupSize(csModule.impl().pModule);
+        sizeX = wgSize[0];
+        sizeY = wgSize[1];
+        sizeZ = wgSize[2];
 
         if (info.layout.has_value())
         {
