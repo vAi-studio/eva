@@ -929,7 +929,7 @@ struct ConstantID {
 // };
 
 
-template<int ID, class T>
+template<uint32_t ID, class T>
 inline auto constant_id(T v)
 {
     return ConstantID<ID, T>{v};
@@ -940,7 +940,7 @@ inline auto constant_id(T v)
 * If the specialization constant is of type boolean, size must be the byte size of VkBool32.
 * And in Vulkan, VkBool32 is defined as uint32_t.
 */
-template<int ID>
+template<uint32_t ID>
 inline auto constant_id(bool v)
 {
     return ConstantID<ID, uint32_t>{ v ? 1u : 0u };
@@ -1032,7 +1032,7 @@ struct ShaderStage {
     ShaderStage(ShaderType shader, SpecializationConstant&& spec ={})
     : shader(shader), specialization(std::move(spec)) {}
 
-    template<int ID, typename T>
+    template<uint32_t ID, typename T>
     ShaderStage operator+(ConstantID<ID, T> constant) && 
     {
         specialization.addConstant(constant);
@@ -1043,7 +1043,7 @@ struct ShaderStage {
 };
 
 
-template<int ID, typename T>
+template<uint32_t ID, typename T>
 inline ShaderStage operator+(ShaderInput shader, ConstantID<ID, T> constant) 
 {
     return ShaderStage(shader) + constant;
