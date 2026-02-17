@@ -1413,8 +1413,6 @@ Device::Impl::~Impl()
 
 void* Device::nativeDevice() const { return impl().vkDevice; }
 void* Device::nativePhysicalDevice() const { return impl().vkPhysicalDevice; }
-VkDevice Device::vkDevice() const { return impl().vkDevice; }
-VkPhysicalDevice Device::vkPhysicalDevice() const { return impl().vkPhysicalDevice; }
 bool Device::hasShaderAtomicFloat() const
 {
     auto deviceExtensions = arrayFrom(vkEnumerateDeviceExtensionProperties, impl().vkPhysicalDevice, nullptr);
@@ -3298,12 +3296,12 @@ MEMORY_PROPERTY Buffer::memoryProperties() const
     return impl().memProps;
 }
 
-VkBuffer Buffer::vkBuffer() const
+void* Buffer::nativeBuffer() const
 {
     return impl().vkBuffer;
 }
 
-VkDeviceMemory Buffer::vkMemory() const
+void* Buffer::nativeMemory() const
 {
     return impl().vkMemory;
 }
