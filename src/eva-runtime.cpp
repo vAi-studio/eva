@@ -226,8 +226,8 @@ static std::pair<VkMemoryAllocateInfo, VkMemoryPropertyFlags> getMemoryAllocInfo
         vkGetBufferMemoryRequirements(device, resource, &memRequirements);  // It should be removed for performance!
     else if constexpr (std::is_same_v<VkResource, VkImage>)
         vkGetImageMemoryRequirements(device, resource, &memRequirements);
-    else 
-        static_assert(false, "Invalid VkResource type");
+    else
+        static_assert(!sizeof(VkResource), "Invalid VkResource type");
 
     /*
     In Vulkan specification, the memoryTypes array is ordered by the following rules:
