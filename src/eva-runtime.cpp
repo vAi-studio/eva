@@ -179,15 +179,60 @@ static void printGpuInfo(uint32_t order, VkPhysicalDevice physicalDevice)
 {
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(physicalDevice, &props);
-    printf("[GPU %d] Device Name: %-30s API Version: %d.%d.%d  Driver Version: %d.%d.%d  Device Type: %-15s\n",
-        order,
-        props.deviceName,
-        VK_VERSION_MAJOR(props.apiVersion), VK_VERSION_MINOR(props.apiVersion), VK_VERSION_PATCH(props.apiVersion),
-        VK_VERSION_MAJOR(props.driverVersion), VK_VERSION_MINOR(props.driverVersion), VK_VERSION_PATCH(props.driverVersion),
+
+    printf("[GPU %d] %s\n", order, props.deviceName);
+    printf("        API Version: %d.%d.%d\n",
+        VK_VERSION_MAJOR(props.apiVersion), VK_VERSION_MINOR(props.apiVersion), VK_VERSION_PATCH(props.apiVersion));
+    printf("        Driver Version: %d.%d.%d\n",
+        VK_VERSION_MAJOR(props.driverVersion), VK_VERSION_MINOR(props.driverVersion), VK_VERSION_PATCH(props.driverVersion));
+    printf("        Device Type: %s\n",
         props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? "Integrated GPU" :
             props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? "Discrete GPU" :
                 props.deviceType == VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU ? "Virtual GPU" :
                     props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU ? "CPU" : "Other");
+
+    // Device Local Memory 정보
+    VkPhysicalDeviceMemoryProperties memProps;
+    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProps);
+    for (uint32_t i = 0; i < memProps.memoryHeapCount; i++) {
+        if (memProps.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+            printf("        Device Local Memory (VRAM): %.2f GB\n",
+                memProps.memoryHeaps[i].size / (1024.0 * 1024.0 * 1024.0));
+            break;
+        }
+    }
+
+    // Compute Shader 정보
+    printf("        Max Workgroup Size:  [%u, %u, %u]\n",
+        props.limits.maxComputeWorkGroupSize[0],
+        props.limits.maxComputeWorkGroupSize[1],
+        props.limits.maxComputeWorkGroupSize[2]);
+    printf("        Max Workgroup Invocations: %u\n", props.limits.maxComputeWorkGroupInvocations);
+    printf("        Max Shared Memory: %u bytes (%.1f KB)\n",
+        props.limits.maxComputeSharedMemorySize,
+        props.limits.maxComputeSharedMemorySize / 1024.0f);
+
+    // Subgroup 정보 (Vulkan 1.1+)
+    VkPhysicalDeviceSubgroupProperties subgroupProps = {};
+    subgroupProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
+    subgroupProps.pNext = nullptr;
+
+    VkPhysicalDeviceProperties2 props2 = {};
+    props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    props2.pNext = &subgroupProps;
+
+    vkGetPhysicalDeviceProperties2(physicalDevice, &props2);
+
+    printf("        Subgroup Size: %u\n", subgroupProps.subgroupSize);
+    printf("        Subgroup Supported Operations: 0x%x", subgroupProps.supportedOperations);
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_BASIC_BIT) printf(" BASIC");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_VOTE_BIT) printf(" VOTE");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_ARITHMETIC_BIT) printf(" ARITHMETIC");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_BALLOT_BIT) printf(" BALLOT");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_SHUFFLE_BIT) printf(" SHUFFLE");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_SHUFFLE_RELATIVE_BIT) printf(" SHUFFLE_REL");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_QUAD_BIT) printf(" QUAD");
+    printf("\n");
 }
 
 static bool deviceSupportsExtensions(
@@ -230,7 +275,7 @@ static std::pair<VkMemoryAllocateInfo, VkMemoryPropertyFlags> getMemoryAllocInfo
     else if constexpr (std::is_same_v<VkResource, VkImage>)
         vkGetImageMemoryRequirements(device, resource, &memRequirements);
     else
-        static_assert(!sizeof(VkResource), "Invalid VkResource type");
+        static_assert(sizeof(VkResource) == 0, "Invalid VkResource type"); // TODO: Linux Clang 호환성 - dependent false
 
     /*
     In Vulkan specification, the memoryTypes array is ordered by the following rules:
@@ -280,6 +325,7 @@ struct Device::Impl {
     // const VkInstance vkInstance;
     const Runtime& parent;
     const DeviceSettings settings;
+    const DeviceCapabilities capabilities;
 
     std::set<CommandPool::Impl**> cmdPools;
     std::set<Fence::Impl**> fences;
@@ -294,6 +340,7 @@ struct Device::Impl {
     std::set<DescriptorSetLayout::Impl**> descSetLayouts;
     std::set<PipelineLayout::Impl**> pipelineLayouts;
     std::set<DescriptorPool::Impl**> descPools;
+    std::set<QueryPool::Impl**> queryPools;
 
 #ifdef EVA_ENABLE_RAYTRACING
     struct {
@@ -311,21 +358,23 @@ struct Device::Impl {
 
     CommandPool defaultCmdPool[queue_max][8] = {};
 
-    Impl(VkPhysicalDevice vkPhysicalDevice,   
-        VkDevice vkDevice, 
+    Impl(VkPhysicalDevice vkPhysicalDevice,
+        VkDevice vkDevice,
         const Runtime& parent,
         const DeviceSettings& settings,
+        const DeviceCapabilities& capabilities,
         uint32_t graphicsQfIndex,
         uint32_t computeQfIndex,
         uint32_t transferQfIndex,
-        std::vector<std::vector<Queue>>&& queues) 
+        std::vector<std::vector<Queue>>&& queues)
     : vkPhysicalDevice(vkPhysicalDevice)
     , vkDevice(vkDevice)
     , parent(parent)
     , settings(settings)
+    , capabilities(capabilities)
     , qfIndex{
-        graphicsQfIndex, 
-        computeQfIndex, 
+        graphicsQfIndex,
+        computeQfIndex,
         transferQfIndex}
         , qCount{
             graphicsQfIndex != uint32_t(-1) ? (uint32_t) queues[graphicsQfIndex].size() : 0,
@@ -519,10 +568,10 @@ struct Buffer::Impl {
     , usage(usage)
     , reqMemProps(reqMemProps)
     , memProps(memProps) {}
-    ~Impl() {
+    ~Impl() {         
         if (mapped) vkUnmapMemory(vkDevice, vkMemory);
-        vkDestroyBuffer(vkDevice, vkBuffer, nullptr);
-        vkFreeMemory(vkDevice, vkMemory, nullptr);
+        vkDestroyBuffer(vkDevice, vkBuffer, nullptr); 
+        vkFreeMemory(vkDevice, vkMemory, nullptr); 
     }
 
     VkMappedMemoryRange getRange(uint64_t offset, uint64_t size) const;
@@ -748,6 +797,24 @@ struct AccelerationStructure::Impl {
 #endif
 
 
+struct QueryPool::Impl {
+    VkDevice vkDevice;
+    VkQueryPool vkQueryPool;
+    uint32_t queryCount;
+    float timestampPeriod;  // nanoseconds per tick
+
+    Impl(VkDevice vkDevice, VkQueryPool vkQueryPool, uint32_t queryCount, float timestampPeriod)
+    : vkDevice(vkDevice)
+    , vkQueryPool(vkQueryPool)
+    , queryCount(queryCount)
+    , timestampPeriod(timestampPeriod)
+    {}
+
+    ~Impl() {
+        vkDestroyQueryPool(vkDevice, vkQueryPool, nullptr);
+    }
+};
+
 
 /////////////////////////////////////////////////////////////////////////////////////////
 // Runtime
@@ -899,14 +966,40 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     ///////////////////////////////////////////////////////////////////////////////////////////
     VkPhysicalDevice pd = physicalDevices[selected];
     auto qfProps = arrayFrom(vkGetPhysicalDeviceQueueFamilyProperties, pd);
-    
-    auto deviceExtensions = arrayFrom(vkEnumerateDeviceExtensionProperties, pd, nullptr);
-    bool shader_atomic_float_supported = std::any_of(deviceExtensions.begin(), deviceExtensions.end(),
-        [](const auto& props) {
-            return strcmp(props.extensionName, VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME) == 0;
-        });
 
+    // Query optional atomic float feature support
+    bool hasAtomicFloatExt = deviceSupportsExtensions(pd, {VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME});
+    bool supportsAtomicFloat = false;
+    if (hasAtomicFloatExt) {
+        VkPhysicalDeviceShaderAtomicFloatFeaturesEXT atomicFloatFeatures{};
+        atomicFloatFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT;
+
+        VkPhysicalDeviceFeatures2 features2{};
+        features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features2.pNext = &atomicFloatFeatures;
+        vkGetPhysicalDeviceFeatures2(pd, &features2);
+
+        supportsAtomicFloat = atomicFloatFeatures.shaderBufferFloat32AtomicAdd;
+    }
+    printf("        Atomic Float (shaderBufferFloat32AtomicAdd): %s\n", supportsAtomicFloat ? "Supported" : "Not Supported");
+    fflush(stdout);
+
+    // LocalSizeId in SPIR-V requires maintenance4 feature enabled.
+    VkPhysicalDeviceMaintenance4Features maintenance4Features{};
+    maintenance4Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES;
+    {
+        VkPhysicalDeviceFeatures2 features2{};
+        features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features2.pNext = &maintenance4Features;
+        vkGetPhysicalDeviceFeatures2(pd, &features2);
+    }
+    if (!maintenance4Features.maintenance4) {
+        throw std::runtime_error("The selected physical device does not support maintenance4 (required by LocalSizeId shaders).");
+    }
+
+    // Required extensions
     std::vector<const char*> reqExtentions = {
+        VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME,
         VK_EXT_ROBUSTNESS_2_EXTENSION_NAME,
         VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME,
         VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME
@@ -918,6 +1011,11 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     else
     {
         printf("[EVA] VK_EXT_shader_atomic_float is not supported on this device. Atomic float path disabled.\n");
+    }
+
+    // Optional extensions
+    if (supportsAtomicFloat) {
+        reqExtentions.push_back(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME);
     }
 
 #ifdef EVA_ENABLE_WINDOW
@@ -1207,14 +1305,14 @@ Device Runtime::createDevice(const DeviceSettings& settings)
 
         priorities[qfIndex].resize(qfProps[qfIndex].queueCount, 0.5f);
 
-        queueFamilyInfos.emplace_back(
-            VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-            nullptr,
-            VkDeviceQueueCreateFlags(0),
-            qfIndex,
-            qfProps[qfIndex].queueCount,
-            priorities[qfIndex].data()     // TODO: Set queue priorities (How to set accross different types but same family?)
-        );
+        queueFamilyInfos.push_back(VkDeviceQueueCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = VkDeviceQueueCreateFlags(0),
+            .queueFamilyIndex = qfIndex,
+            .queueCount = qfProps[qfIndex].queueCount,
+            .pQueuePriorities = priorities[qfIndex].data()     // TODO: Set queue priorities (How to set accross different types but same family?)
+        }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
     }
 
     PNextChain chain;
@@ -1223,19 +1321,16 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
         });
 
+        // Required features
         chain.add(VkPhysicalDeviceSynchronization2Features{
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES,
             .synchronization2 = VK_TRUE,
         });
-    
-        if (shader_atomic_float_supported)
-        {
-            chain.add(VkPhysicalDeviceShaderAtomicFloatFeaturesEXT{
-                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT,
-                .shaderBufferFloat32AtomicAdd = VK_TRUE,
-                //.shaderSharedFloat32AtomicAdd = VK_TRUE,
-            });
-        }
+
+        chain.add(VkPhysicalDeviceMaintenance4Features{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES,
+            .maintenance4 = VK_TRUE,
+        });
 
         chain.add(VkPhysicalDeviceRobustness2FeaturesEXT{
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
@@ -1246,24 +1341,13 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT,
             .graphicsPipelineLibrary = VK_TRUE,
         });
-
-        // @chay116 2025/12/21 - Enable 16-bit storage for FP16 weight shaders
-        chain.add(VkPhysicalDeviceVulkan11Features{
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
-            .storageBuffer16BitAccess = VK_TRUE,
-        });
-
-        // @chay116 2025/12/21 - Enable FP16 arithmetic for f16vec4 operations
-        chain.add(VkPhysicalDeviceShaderFloat16Int8Features{
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES,
-            .shaderFloat16 = VK_TRUE,
-        });
-
-        // @chay116 - bufferDeviceAddress: always enabled (BDA push constants used by all GEMM paths)
-        chain.add(VkPhysicalDeviceBufferDeviceAddressFeatures{
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
-            .bufferDeviceAddress = VK_TRUE,
-        });
+        // Optional features
+        if (supportsAtomicFloat) {
+            chain.add(VkPhysicalDeviceShaderAtomicFloatFeaturesEXT{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT,
+                .shaderBufferFloat32AtomicAdd = VK_TRUE,
+            });
+        }
 
 #ifdef EVA_ENABLE_RAYTRACING
         if (settings.enableRaytracing)
@@ -1380,11 +1464,53 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         }
     }
 
+    // Populate DeviceCapabilities
+    DeviceCapabilities caps;
+    {
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(pd, &props);
+
+        caps.deviceName = props.deviceName;
+        caps.isDiscreteGpu = (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU);
+        caps.maxWorkgroupSize[0] = props.limits.maxComputeWorkGroupSize[0];
+        caps.maxWorkgroupSize[1] = props.limits.maxComputeWorkGroupSize[1];
+        caps.maxWorkgroupSize[2] = props.limits.maxComputeWorkGroupSize[2];
+        caps.maxWorkgroupInvocations = props.limits.maxComputeWorkGroupInvocations;
+        caps.maxSharedMemorySize = props.limits.maxComputeSharedMemorySize;
+
+        // Subgroup properties
+        VkPhysicalDeviceSubgroupProperties subgroupProps{};
+        subgroupProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
+        VkPhysicalDeviceProperties2 props2{};
+        props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        props2.pNext = &subgroupProps;
+        vkGetPhysicalDeviceProperties2(pd, &props2);
+
+        caps.subgroupSize = subgroupProps.subgroupSize;
+        caps.subgroupOperations = subgroupProps.supportedOperations;
+
+        // Optional features
+        caps.supportsAtomicFloat = supportsAtomicFloat;
+        caps.supportsAtomicFloatShared = false;  // TODO: query if needed
+
+        // Device local memory
+        VkPhysicalDeviceMemoryProperties memProps;
+        vkGetPhysicalDeviceMemoryProperties(pd, &memProps);
+        caps.deviceLocalMemorySize = 0;
+        for (uint32_t i = 0; i < memProps.memoryHeapCount; i++) {
+            if (memProps.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+                caps.deviceLocalMemorySize = memProps.memoryHeaps[i].size;
+                break;
+            }
+        }
+    }
+
     auto pImpl = new Device::Impl(
         pd,
         vkDevice,
         *this,
         settings,
+        caps,
         qfIndex[queue_graphics],
         qfIndex[queue_compute],
         qfIndex[queue_transfer],
@@ -1499,6 +1625,7 @@ Device::Impl::~Impl()
     deleter(descSetLayouts);
     deleter(pipelineLayouts);
     deleter(descPools);
+    deleter(queryPools);
 
 #ifdef EVA_ENABLE_RAYTRACING
     deleter(raytracingPipelines);
@@ -1545,6 +1672,11 @@ void Device::reportAssignedQueues() const
     printf("***Transfer Queues***\n");
     reportQfs(impl().queues[impl().qfIndex[queue_transfer]]);
     fflush(stdout);
+}
+
+const DeviceCapabilities& Device::capabilities() const
+{
+    return impl().capabilities;
 }
 
 uint32_t Device::queueCount(QueueType type) const 
@@ -1684,16 +1816,16 @@ Queue Queue::submit(std::vector<SubmissionBatchInfo>&& batches, std::optional<Fe
         info.waitSemaphoreInfoCount = (uint32_t) inWaitSems.size();
         info.pWaitSemaphoreInfos = waitSems.data() + waitSemOffset;
 
-        for (auto& inWaitSem : inWaitSems) 
+        for (auto& inWaitSem : inWaitSems)
         {
-            waitSems.emplace_back(
-                VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-                nullptr,
-                inWaitSem.sem.impl().vkSemaphore,
-                0,
-                (VkPipelineStageFlags2)(uint64_t)inWaitSem.stage,
-                0
-            );
+            waitSems.push_back(VkSemaphoreSubmitInfo{
+                .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+                .pNext = nullptr,
+                .semaphore = inWaitSem.sem.impl().vkSemaphore,
+                .value = 0,
+                .stageMask = (VkPipelineStageFlags2)(uint64_t)inWaitSem.stage,
+                .deviceIndex = 0
+            }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
         }
         waitSemOffset += info.waitSemaphoreInfoCount;
 
@@ -1704,27 +1836,27 @@ Queue Queue::submit(std::vector<SubmissionBatchInfo>&& batches, std::optional<Fe
             // EVA_ASSERT(inCmdBuffer.queueFamilyIndex() == impl().qfIndex); // VUID-vkQueueSubmit2-pCommandBuffers-00074
             EVA_ASSERT(_type == inCmdBuffer.type()); // VUID-vkQueueSubmit2-pCommandBuffers-00074
             inCmdBuffer.impl().lastSubmittedQueue = *this;
-            cmdBuffers.emplace_back(
-                VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
-                nullptr,
-                inCmdBuffer.impl().vkCmdBuffer,
-                0
-            );
+            cmdBuffers.push_back(VkCommandBufferSubmitInfo{
+                .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+                .pNext = nullptr,
+                .commandBuffer = inCmdBuffer.impl().vkCmdBuffer,
+                .deviceMask = 0
+            }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
         }
         cmdBufferOffset += info.commandBufferInfoCount;
 
         info.signalSemaphoreInfoCount = (uint32_t) inSignalSems.size();
         info.pSignalSemaphoreInfos = signalSems.data() + signalSemOffset;
-        for (auto& inSignalSem : inSignalSems) 
+        for (auto& inSignalSem : inSignalSems)
         {
-            signalSems.emplace_back(
-                VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-                nullptr,
-                inSignalSem.sem.impl().vkSemaphore,
-                0,
-                (VkPipelineStageFlags2)(uint64_t)inSignalSem.stage,
-                0
-            );
+            signalSems.push_back(VkSemaphoreSubmitInfo{
+                .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+                .pNext = nullptr,
+                .semaphore = inSignalSem.sem.impl().vkSemaphore,
+                .value = 0,
+                .stageMask = (VkPipelineStageFlags2)(uint64_t)inSignalSem.stage,
+                .deviceIndex = 0
+            }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
         }
         signalSemOffset += info.signalSemaphoreInfoCount;
     }
@@ -1939,19 +2071,19 @@ CommandBuffer CommandBuffer::bindPipeline(Pipeline pipeline)
 }
 
 CommandBuffer CommandBuffer::bindDescSets(
-    PipelineLayout layout, 
+    PipelineLayout layout,
     PIPELINE_BIND_POINT bindPoint,
     std::vector<DescriptorSet> descSets,
     uint32_t firstSet)
 {
     std::vector<VkDescriptorSet> vkDescSets(descSets.size());
-    for (uint32_t i = 0; i < descSets.size(); ++i) 
+    for (uint32_t i = 0; i < descSets.size(); ++i)
         vkDescSets[i] = descSets[i] ? descSets[i].impl().vkDescSet : VK_NULL_HANDLE;
 
     vkCmdBindDescriptorSets(
-        impl().vkCmdBuffer, (VkPipelineBindPoint)(uint32_t)bindPoint, 
-        layout.impl().vkPipeLayout, firstSet, 
-        (uint32_t)vkDescSets.size(), vkDescSets.data(), 
+        impl().vkCmdBuffer, (VkPipelineBindPoint)(uint32_t)bindPoint,
+        layout.impl().vkPipeLayout, firstSet,
+        (uint32_t)vkDescSets.size(), vkDescSets.data(),
         0, nullptr);
     return *this;
 }
@@ -1961,7 +2093,7 @@ CommandBuffer CommandBuffer::bindDescSets(
     uint32_t firstSet)
 {
     std::vector<VkDescriptorSet> vkDescSets(descSets.size());
-    for (uint32_t i = 0; i < descSets.size(); ++i) 
+    for (uint32_t i = 0; i < descSets.size(); ++i)
         vkDescSets[i] = descSets[i] ? descSets[i].impl().vkDescSet : VK_NULL_HANDLE;
 
     auto index = impl().boundPipeline.index();
@@ -2078,32 +2210,32 @@ CommandBuffer CommandBuffer::barrier(
                 else EVA_ASSERT(barrier.opType == OwnershipTransferOpType::none);
             }
             
-            if constexpr (std::is_same_v<T, MemoryBarrier>) 
+            if constexpr (std::is_same_v<T, MemoryBarrier>)
             {
-                memoryBarriers.emplace_back(
-                    VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-                    nullptr,
-                    (VkPipelineStageFlags2) barrier.srcMask.scope.stage,
-                    (VkAccessFlags2) barrier.srcMask.scope.access,
-                    (VkPipelineStageFlags2) barrier.dstMask.scope.stage,
-                    (VkAccessFlags2) barrier.dstMask.scope.access
-                );
+                memoryBarriers.push_back(VkMemoryBarrier2{
+                    .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                    .pNext = nullptr,
+                    .srcStageMask = (VkPipelineStageFlags2) barrier.srcMask.scope.stage,
+                    .srcAccessMask = (VkAccessFlags2) barrier.srcMask.scope.access,
+                    .dstStageMask = (VkPipelineStageFlags2) barrier.dstMask.scope.stage,
+                    .dstAccessMask = (VkAccessFlags2) barrier.dstMask.scope.access
+                }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
             }
-            else if constexpr (std::is_same_v<T, BufferMemoryBarrier>) 
+            else if constexpr (std::is_same_v<T, BufferMemoryBarrier>)
             {
-                bufferBarriers.emplace_back(
-                    VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-                    nullptr,
-                    (VkPipelineStageFlags2) barrier.srcMask.scope.stage,
-                    (VkAccessFlags2) barrier.srcMask.scope.access,
-                    (VkPipelineStageFlags2) barrier.dstMask.scope.stage,
-                    (VkAccessFlags2) barrier.dstMask.scope.access,
-                    srcQueueFamilyIndex,
-                    dstQueueFamilyIndex,
-                    barrier.buffer.buffer.impl().vkBuffer,
-                    barrier.buffer.offset, 
-                    barrier.buffer.size
-                );
+                bufferBarriers.push_back(VkBufferMemoryBarrier2{
+                    .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                    .pNext = nullptr,
+                    .srcStageMask = (VkPipelineStageFlags2) barrier.srcMask.scope.stage,
+                    .srcAccessMask = (VkAccessFlags2) barrier.srcMask.scope.access,
+                    .dstStageMask = (VkPipelineStageFlags2) barrier.dstMask.scope.stage,
+                    .dstAccessMask = (VkAccessFlags2) barrier.dstMask.scope.access,
+                    .srcQueueFamilyIndex = srcQueueFamilyIndex,
+                    .dstQueueFamilyIndex = dstQueueFamilyIndex,
+                    .buffer = barrier.buffer.buffer.impl().vkBuffer,
+                    .offset = barrier.buffer.offset,
+                    .size = barrier.buffer.size
+                }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
             }
             else if constexpr (std::is_same_v<T, ImageMemoryBarrier>) 
             {
@@ -2148,26 +2280,24 @@ CommandBuffer CommandBuffer::barrier(
                     }
                 }
 
-                imageBarriers.emplace_back(
-                    VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                    nullptr,
-                    (VkPipelineStageFlags2) barrier.srcMask.scope.stage,
-                    (VkAccessFlags2) barrier.srcMask.scope.access,
-                    (VkPipelineStageFlags2) barrier.dstMask.scope.stage,
-                    (VkAccessFlags2) barrier.dstMask.scope.access,
-                    (VkImageLayout)(uint32_t) barrier.oldLayout,
-                    (VkImageLayout)(uint32_t) barrier.newLayout,
-                    // (VkImageLayout)(uint32_t) barrier.image.impl().currentLayout,
-                    // (VkImageLayout)(uint32_t) (barrier.newLayout == IMAGE_LAYOUT::UNDEFINED ? barrier.image.impl().currentLayout : barrier.newLayout),
-                    srcQueueFamilyIndex,
-                    dstQueueFamilyIndex,
-                    barrier.image.impl().vkImage,
-                    VkImageSubresourceRange{
+                imageBarriers.push_back(VkImageMemoryBarrier2{
+                    .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                    .pNext = nullptr,
+                    .srcStageMask = (VkPipelineStageFlags2) barrier.srcMask.scope.stage,
+                    .srcAccessMask = (VkAccessFlags2) barrier.srcMask.scope.access,
+                    .dstStageMask = (VkPipelineStageFlags2) barrier.dstMask.scope.stage,
+                    .dstAccessMask = (VkAccessFlags2) barrier.dstMask.scope.access,
+                    .oldLayout = (VkImageLayout)(uint32_t) barrier.oldLayout,
+                    .newLayout = (VkImageLayout)(uint32_t) barrier.newLayout,
+                    .srcQueueFamilyIndex = srcQueueFamilyIndex,
+                    .dstQueueFamilyIndex = dstQueueFamilyIndex,
+                    .image = barrier.image.impl().vkImage,
+                    .subresourceRange = VkImageSubresourceRange{
                         .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,    // TODO: support depth/stencil
                         .levelCount = VK_REMAINING_MIP_LEVELS,      // TODO: support level control
                         .layerCount = VK_REMAINING_ARRAY_LAYERS,    // TODO: support layer control
                     }
-                );
+                }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
 
                 // barrier.image.impl().currentLayout = barrier.newLayout; // update current layout
             }
@@ -2219,31 +2349,31 @@ CommandBuffer CommandBuffer::barrier(
                 else EVA_ASSERT(barrier.opType == OwnershipTransferOpType::none);
             }
             
-            if constexpr (std::is_same_v<T, MemoryBarrier>) 
+            if constexpr (std::is_same_v<T, MemoryBarrier>)
             {
                 srcStageMask |= (VkPipelineStageFlags) barrier.srcMask.stage;
                 dstStageMask |= (VkPipelineStageFlags) barrier.dstMask.stage;
-                memoryBarriers.emplace_back(
-                    VK_STRUCTURE_TYPE_MEMORY_BARRIER,
-                    nullptr,
-                    (VkAccessFlags) barrier.srcMask.access,
-                    (VkAccessFlags) barrier.dstMask.access
-                );
+                memoryBarriers.push_back(VkMemoryBarrier{
+                    .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                    .pNext = nullptr,
+                    .srcAccessMask = (VkAccessFlags) barrier.srcMask.access,
+                    .dstAccessMask = (VkAccessFlags) barrier.dstMask.access
+                }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
             }
             else if constexpr (std::is_same_v<T, BufferMemoryBarrier>) {
                 srcStageMask |= (VkPipelineStageFlags) barrier.srcMask.stage;
                 dstStageMask |= (VkPipelineStageFlags) barrier.dstMask.stage;
-                bufferBarriers.emplace_back(
-                    VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-                    nullptr,
-                    (VkAccessFlags) barrier.srcMask.access,
-                    (VkAccessFlags) barrier.dstMask.access,
-                    srcQueueFamilyIndex,
-                    dstQueueFamilyIndex,
-                    barrier.buffer.impl().vkBuffer,
-                    barrier.offset, 
-                    barrier.size
-                );
+                bufferBarriers.push_back(VkBufferMemoryBarrier{
+                    .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                    .pNext = nullptr,
+                    .srcAccessMask = (VkAccessFlags) barrier.srcMask.access,
+                    .dstAccessMask = (VkAccessFlags) barrier.dstMask.access,
+                    .srcQueueFamilyIndex = srcQueueFamilyIndex,
+                    .dstQueueFamilyIndex = dstQueueFamilyIndex,
+                    .buffer = barrier.buffer.impl().vkBuffer,
+                    .offset = barrier.offset,
+                    .size = barrier.size
+                }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
             }
             else if constexpr (std::is_same_v<T, ImageMemoryBarrier>) {
                 // TODO: Support image & image barrier
@@ -2305,9 +2435,37 @@ CommandBuffer CommandBuffer::copyBuffer(
 CommandBuffer CommandBuffer::copyBuffer(BufferRange src, BufferRange dst)
 {
     return copyBuffer(
-        src.buffer, dst.buffer, 
-        src.offset, dst.offset, 
+        src.buffer, dst.buffer,
+        src.offset, dst.offset,
         std::min(src.size, dst.size));
+}
+
+CommandBuffer CommandBuffer::fillBuffer(
+    Buffer dst,
+    uint32_t data,
+    uint64_t dstOffset,
+    uint64_t size)
+{
+    EVA_ASSERT((uint32_t)dst.impl().usage & VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    EVA_ASSERT(dstOffset < dst.size());
+
+    if (size == EVA_WHOLE_SIZE)
+        size = dst.size() - dstOffset;
+    else
+        EVA_ASSERT(dstOffset + size <= dst.size());
+
+    // vkCmdFillBuffer requires size to be a multiple of 4
+    EVA_ASSERT(size % 4 == 0);
+    EVA_ASSERT(dstOffset % 4 == 0);
+
+    vkCmdFillBuffer(
+        impl().vkCmdBuffer,
+        dst.impl().vkBuffer,
+        dstOffset,
+        size,
+        data);
+
+    return *this;
 }
 
 CommandBuffer CommandBuffer::copyImage(
@@ -2484,6 +2642,26 @@ CommandBuffer CommandBuffer::dispatch(uint32_t groupCountX, uint32_t groupCountY
     vkCmdDispatch(impl().vkCmdBuffer, groupCountX, groupCountY, groupCountZ);
     return *this;
 }
+
+
+CommandBuffer CommandBuffer::resetQueryPool(QueryPool pool, uint32_t firstQuery, uint32_t queryCount)
+{
+    if (queryCount == 0) queryCount = pool.queryCount() - firstQuery;
+    vkCmdResetQueryPool(impl().vkCmdBuffer, pool.impl().vkQueryPool, firstQuery, queryCount);
+    return *this;
+}
+
+
+CommandBuffer CommandBuffer::writeTimestamp(PIPELINE_STAGE stage, QueryPool pool, uint32_t query)
+{
+    vkCmdWriteTimestamp(
+        impl().vkCmdBuffer,
+        (VkPipelineStageFlagBits)(uint64_t)stage,
+        pool.impl().vkQueryPool,
+        query);
+    return *this;
+}
+
 
 #ifdef EVA_ENABLE_RAYTRACING
 CommandBuffer CommandBuffer::traceRays(
@@ -2876,121 +3054,9 @@ DescriptorSetLayout ComputePipeline::descSetLayout(uint32_t setId) const
     return impl().layout.descSetLayout(setId);
 }
 
-void ComputePipeline::dumpInternalRepresentations(const char* outputDir) const
+uint32_t ComputePipeline::pushConstantSize() const
 {
-    if (!vkGetPipelineExecutablePropertiesKHR_ || !vkGetPipelineExecutableInternalRepresentationsKHR_)
-    {
-        printf("[EVA] SASS dump not available (enablePipelineExecutableInfo not set)\n");
-        return;
-    }
-
-    VkPipelineInfoKHR pipelineInfo{
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_INFO_KHR,
-        .pipeline = impl().vkPipeline,
-    };
-
-    // Get executables
-    uint32_t execCount = 0;
-    vkGetPipelineExecutablePropertiesKHR_(impl().vkDevice, &pipelineInfo, &execCount, nullptr);
-    std::vector<VkPipelineExecutablePropertiesKHR> execProps(execCount, {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR,
-    });
-    vkGetPipelineExecutablePropertiesKHR_(impl().vkDevice, &pipelineInfo, &execCount, execProps.data());
-
-    for (uint32_t e = 0; e < execCount; ++e)
-    {
-        printf("[EVA] Pipeline executable %u: %s (%s)\n", e, execProps[e].name, execProps[e].description);
-
-        VkPipelineExecutableInfoKHR execInfo{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR,
-            .pipeline = impl().vkPipeline,
-            .executableIndex = e,
-        };
-
-        // Query statistics first
-        if (vkGetPipelineExecutableStatisticsKHR_)
-        {
-            uint32_t statCount = 0;
-            vkGetPipelineExecutableStatisticsKHR_(impl().vkDevice, &execInfo, &statCount, nullptr);
-            if (statCount > 0) {
-                std::vector<VkPipelineExecutableStatisticKHR> stats(statCount, {
-                    .sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_STATISTIC_KHR,
-                });
-                vkGetPipelineExecutableStatisticsKHR_(impl().vkDevice, &execInfo, &statCount, stats.data());
-                for (uint32_t s = 0; s < statCount; ++s) {
-                    printf("  Stat: %s = ", stats[s].name);
-                    switch (stats[s].format) {
-                        case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_BOOL32_KHR:
-                            printf("%s", stats[s].value.b32 ? "true" : "false"); break;
-                        case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_INT64_KHR:
-                            printf("%lld", stats[s].value.i64); break;
-                        case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR:
-                            printf("%llu", stats[s].value.u64); break;
-                        case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_FLOAT64_KHR:
-                            printf("%.4f", stats[s].value.f64); break;
-                        default: printf("?"); break;
-                    }
-                    printf(" (%s)\n", stats[s].description);
-                }
-            }
-        }
-
-        // Get internal representations count
-        uint32_t repCount = 0;
-        VkResult res = vkGetPipelineExecutableInternalRepresentationsKHR_(impl().vkDevice, &execInfo, &repCount, nullptr);
-        printf("  Representations: %u (result=%d)\n", repCount, res);
-
-        if (repCount == 0) continue;
-
-        // First call with pData=nullptr to get sizes
-        std::vector<VkPipelineExecutableInternalRepresentationKHR> reps(repCount, {
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INTERNAL_REPRESENTATION_KHR,
-        });
-        vkGetPipelineExecutableInternalRepresentationsKHR_(impl().vkDevice, &execInfo, &repCount, reps.data());
-
-        // Allocate data buffers
-        std::vector<std::vector<char>> repData(repCount);
-        for (uint32_t r = 0; r < repCount; ++r)
-        {
-            repData[r].resize(reps[r].dataSize);
-            reps[r].pData = repData[r].data();
-        }
-
-        // Second call to get data
-        vkGetPipelineExecutableInternalRepresentationsKHR_(impl().vkDevice, &execInfo, &repCount, reps.data());
-
-        for (uint32_t r = 0; r < repCount; ++r)
-        {
-            printf("  [%u] %s (%s) - %zu bytes, text=%s\n",
-                r, reps[r].name, reps[r].description,
-                reps[r].dataSize, reps[r].isText ? "yes" : "no");
-
-            if (outputDir && reps[r].dataSize > 0)
-            {
-                // Build filename: outputDir/exec_name.rep_name.txt (or .bin)
-                std::string filename = std::string(outputDir) + "/" +
-                    execProps[e].name + "." + reps[r].name +
-                    (reps[r].isText ? ".txt" : ".bin");
-
-                // Sanitize filename (replace spaces with underscores)
-                for (auto& c : filename)
-                    if (c == ' ') c = '_';
-
-                FILE* f = fopen(filename.c_str(), reps[r].isText ? "w" : "wb");
-                if (f)
-                {
-                    fwrite(repData[r].data(), 1, reps[r].dataSize, f);
-                    fclose(f);
-                    printf("    -> Saved to %s\n", filename.c_str());
-                }
-            }
-            else if (!outputDir && reps[r].isText && reps[r].dataSize > 0 && reps[r].dataSize < 4096)
-            {
-                // Print small text representations to stdout
-                printf("--- %s ---\n%.*s\n---\n", reps[r].name, (int)reps[r].dataSize, repData[r].data());
-            }
-        }
-    }
+    return impl().layout.pushConstantSize();
 }
 
 
@@ -3334,7 +3400,7 @@ uint8_t* Buffer::map(uint64_t offset, uint64_t size)
     EVA_ASSERT(*this);
     EVA_ASSERT((uint32_t)impl().memProps & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);  // VUID-vkMapMemory-memory-00682
     EVA_ASSERT(offset < impl().size);                                   // VUID-vkMapMemory-offset-00679
-
+    
     if (size == EVA_WHOLE_SIZE)
         size = impl().size - offset;
     else
@@ -3399,7 +3465,16 @@ void Buffer::unmap()
     impl().mappedSize = 0;
 }
 
-// @chay116 - Buffer::size() and Buffer::usage() moved to eva-runtime.h as inline
+// TODO: Linux 호환성 - inline 제거 (GCC Release 빌드에서 링킹 에러 방지)
+uint64_t Buffer::size() const
+{
+    return impl().size;
+}
+
+BUFFER_USAGE Buffer::usage() const
+{
+    return impl().usage;
+}
 
 MEMORY_PROPERTY Buffer::memoryProperties() const
 {
@@ -3566,15 +3641,15 @@ DescriptorSetLayout Device::createDescriptorSetLayout(DescriptorSetLayoutDesc de
 
     for (auto& [_, bindingInfo] : desc.bindings) 
     {
-        vkBindings.emplace_back(
-            bindingInfo.binding,
-            (VkDescriptorType)(uint32_t)bindingInfo.descriptorType,
-            bindingInfo.descriptorCount,
-            bindingInfo.stageFlags == SHADER_STAGE::NONE ? 
-                VK_SHADER_STAGE_ALL : 
+        vkBindings.push_back(VkDescriptorSetLayoutBinding{
+            .binding = bindingInfo.binding,
+            .descriptorType = (VkDescriptorType)(uint32_t)bindingInfo.descriptorType,
+            .descriptorCount = bindingInfo.descriptorCount,
+            .stageFlags = bindingInfo.stageFlags == SHADER_STAGE::NONE ?
+                VK_SHADER_STAGE_ALL :
                 (VkShaderStageFlags)(uint32_t)bindingInfo.stageFlags,
-            nullptr // TODO: support immutable samplers
-        );
+            .pImmutableSamplers = nullptr
+        }); // TODO: Clang 호환성 - emplace_back → push_back + designated initializer
     }
 
     auto vkHandle = create<VkDescriptorSetLayout>(impl().vkDevice, {
@@ -3656,6 +3731,11 @@ DescriptorSetLayout PipelineLayout::descSetLayout(uint32_t setId) const
     return impl().setLayouts.at(setId);
 }
 
+uint32_t PipelineLayout::pushConstantSize() const
+{
+    return impl().uniquePushConstant ? impl().uniquePushConstant->size : 0;
+}
+
 
 /////////////////////////////////////////////////////////////////////////////////////////
 // DescriptorPool
@@ -3686,6 +3766,76 @@ DescriptorPool Device::createDescriptorPool(const DescriptorPoolCreateInfo& info
     return *impl().descPools.insert(new DescriptorPool::Impl*(pImpl)).first;
 }
 
+
+QueryPool Device::createQueryPool(uint32_t queryCount)
+{
+    VkQueryPoolCreateInfo createInfo = {
+        .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+        .queryType = VK_QUERY_TYPE_TIMESTAMP,
+        .queryCount = queryCount,
+    };
+
+    VkQueryPool vkQueryPool;
+    ASSERT_SUCCESS(vkCreateQueryPool(impl().vkDevice, &createInfo, nullptr, &vkQueryPool));
+
+    // Get timestamp period from physical device
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(impl().vkPhysicalDevice, &props);
+
+    auto pImpl = new QueryPool::Impl(
+        impl().vkDevice,
+        vkQueryPool,
+        queryCount,
+        props.limits.timestampPeriod);
+
+    return *impl().queryPools.insert(new QueryPool::Impl*(pImpl)).first;
+}
+
+
+bool Device::supportsTimestampQueries() const
+{
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(impl().vkPhysicalDevice, &props);
+    return props.limits.timestampComputeAndGraphics == VK_TRUE;
+}
+
+
+std::vector<uint64_t> QueryPool::getResults(uint32_t firstQuery, uint32_t queryCount)
+{
+    if (queryCount == 0) queryCount = impl().queryCount - firstQuery;
+
+    std::vector<uint64_t> results(queryCount);
+    vkGetQueryPoolResults(
+        impl().vkDevice,
+        impl().vkQueryPool,
+        firstQuery,
+        queryCount,
+        queryCount * sizeof(uint64_t),
+        results.data(),
+        sizeof(uint64_t),
+        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT
+    );
+    return results;
+}
+
+
+double QueryPool::getElapsedMs(uint32_t startQuery, uint32_t endQuery)
+{
+    auto results = getResults(startQuery, endQuery - startQuery + 1);
+    if (results.size() < 2) return 0.0;
+
+    uint64_t elapsed = results.back() - results.front();
+    // timestampPeriod is in nanoseconds, convert to milliseconds
+    return static_cast<double>(elapsed) * impl().timestampPeriod / 1e6;
+}
+
+
+uint32_t QueryPool::queryCount() const
+{
+    return impl().queryCount;
+}
+
+
 std::vector<DescriptorSet> DescriptorPool::operator()(std::vector<DescriptorSetLayout> setLayouts)
 {
     std::vector<VkDescriptorSetLayout> vkSetLayouts(setLayouts.size());
@@ -3699,15 +3849,16 @@ std::vector<DescriptorSet> DescriptorPool::operator()(std::vector<DescriptorSetL
         .pSetLayouts = vkSetLayouts.data(),
     });
 
-    std::vector<DescriptorSet> descSets(setLayouts.size());
-    for (uint32_t i = 0; i < setLayouts.size(); ++i) 
+    std::vector<DescriptorSet> descSets;
+    descSets.reserve(setLayouts.size()); // TODO: Linux Clang 호환성 - vector(size) → reserve + push_back
+    for (uint32_t i = 0; i < setLayouts.size(); ++i)
     {
         auto pImpl = new DescriptorSet::Impl(
-            impl().vkDevice, 
-            vkDescSets[i], 
+            impl().vkDevice,
+            vkDescSets[i],
             setLayouts[i]);
-            
-        descSets[i] = impl().descSets.emplace_back(new DescriptorSet::Impl*(pImpl));
+
+        descSets.push_back(impl().descSets.emplace_back(new DescriptorSet::Impl*(pImpl)));
     }
 
     return descSets;
@@ -3822,12 +3973,12 @@ DescriptorSet DescriptorSet::write(
             {
                 // imageInfos.push_back(std::get<ImageDescriptor>(descriptors[consumedDescriptors + i]).descInfo());
                 auto& desc = std::get<ImageDescriptor>(descriptors[consumedDescriptors + i]);
-                imageInfos.emplace_back(
-                    desc.sampler ? desc.sampler->impl().vkSampler : VK_NULL_HANDLE,
-                    desc.imageView ? desc.imageView->impl().vkImageView : VK_NULL_HANDLE,
-                    (VkImageLayout)(uint32_t) (desc.imageLayout != IMAGE_LAYOUT::MAX_ENUM 
+                imageInfos.push_back(VkDescriptorImageInfo{
+                    .sampler = desc.sampler ? desc.sampler->impl().vkSampler : VK_NULL_HANDLE,
+                    .imageView = desc.imageView ? desc.imageView->impl().vkImageView : VK_NULL_HANDLE,
+                    .imageLayout = (VkImageLayout)(uint32_t) (desc.imageLayout != IMAGE_LAYOUT::MAX_ENUM
                                                 ? desc.imageLayout : defaultLayout)
-                );
+                }); // TODO: Clang 호환성 - emplace_back → push_back + designated initializer
             }
         }
         
@@ -5006,6 +5157,7 @@ DESTROY_MACRO(DescriptorSetLayout)
 DESTROY_MACRO(PipelineLayout)
 DESTROY_MACRO(DescriptorPool)
 DESTROY_MACRO(DescriptorSet)
+DESTROY_MACRO(QueryPool)
 #ifdef EVA_ENABLE_WINDOW
     DESTROY_MACRO(Window)
 #endif
