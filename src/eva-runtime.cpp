@@ -999,23 +999,19 @@ Device Runtime::createDevice(const DeviceSettings& settings)
 
     // Required extensions
     std::vector<const char*> reqExtentions = {
-        VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME,
         VK_EXT_ROBUSTNESS_2_EXTENSION_NAME,
         VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME,
         VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME
     };
-    if (shader_atomic_float_supported)
+
+    // Optional: shader atomic float
+    if (supportsAtomicFloat)
     {
         reqExtentions.push_back(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME);
     }
     else
     {
         printf("[EVA] VK_EXT_shader_atomic_float is not supported on this device. Atomic float path disabled.\n");
-    }
-
-    // Optional extensions
-    if (supportsAtomicFloat) {
-        reqExtentions.push_back(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME);
     }
 
 #ifdef EVA_ENABLE_WINDOW
@@ -1059,6 +1055,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
 #endif
 
         // Check if VK_NV_cooperative_matrix2 extension is available
+        auto deviceExtensions = arrayFrom(vkEnumerateDeviceExtensionProperties, pd, nullptr);
         bool coopmat2_ext_available = std::any_of(deviceExtensions.begin(), deviceExtensions.end(),
             [](const auto& props) {
                 return strcmp(props.extensionName, "VK_NV_cooperative_matrix2") == 0;
@@ -3465,16 +3462,7 @@ void Buffer::unmap()
     impl().mappedSize = 0;
 }
 
-// TODO: Linux 호환성 - inline 제거 (GCC Release 빌드에서 링킹 에러 방지)
-uint64_t Buffer::size() const
-{
-    return impl().size;
-}
-
-BUFFER_USAGE Buffer::usage() const
-{
-    return impl().usage;
-}
+// Note: Buffer::size() and Buffer::usage() are inline in eva-runtime.h (cached values)
 
 MEMORY_PROPERTY Buffer::memoryProperties() const
 {
