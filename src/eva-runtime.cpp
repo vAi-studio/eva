@@ -921,6 +921,10 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     }
 #endif
 
+    // reqExtentions.push_back(VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME); // deprecated, promoted to core in 1.2
+    // reqExtentions.push_back(VK_KHR_16BIT_STORAGE_EXTENSION_NAME);       // deprecated, promoted to core in 1.1
+    // reqExtentions.push_back(VK_KHR_8BIT_STORAGE_EXTENSION_NAME);        // deprecated, promoted to core in 1.2
+
     if (!deviceSupportsExtensions(pd, reqExtentions))
     {
         throw std::runtime_error("The selected physical device does not support the required extensions.");
@@ -1095,6 +1099,17 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         chain.add(VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT{
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT,
             .graphicsPipelineLibrary = VK_TRUE,
+        });
+
+        chain.add(VkPhysicalDeviceShaderFloat16Int8Features{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES,
+            .shaderFloat16 = VK_TRUE,
+            // .shaderInt8 = VK_TRUE,
+        });
+
+        chain.add(VkPhysicalDevice16BitStorageFeatures{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES,
+            .storageBuffer16BitAccess = VK_TRUE,
         });
 
 #ifdef EVA_ENABLE_RAYTRACING

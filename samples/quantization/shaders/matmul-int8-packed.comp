@@ -1,0 +1,42 @@
+#version 450
+
+layout(local_size_x = 32, local_size_y = 32) in;
+
+// A_packed:  M x (K/4) uint32, row-major, packed along K
+// BT_packed: N x (K/4) uint32, B transposed then packed along K
+// C:         M x N int32 output
+layout(set = 0, binding = 0) buffer OutBuffer { int  C[]; };
+layout(set = 0, binding = 1) buffer InBuffer  { uint A_packed[]; };
+layout(set = 0, binding = 2) buffer Weight    { uint BT_packed[]; };
+
+layout(push_constant) uniform PushConstants {
+    int M;
+    int N;
+    int K4;  // K / 4
+};
+
+// DP4A-style: dot product of 4 packed int8 pairs
+int dot4(uint a, uint b)
+{
+    int sum = 0;
+    sum += bitfieldExtract(int(a),  0, 8) * bitfieldExtract(int(b),  0, 8);
+    sum += bitfieldExtract(int(a),  8, 8) * bitfieldExtract(int(b),  8, 8);
+    sum += bitfieldExtract(int(a), 16, 8) * bitfieldExtract(int(b), 16, 8);
+    sum += bitfieldExtract(int(a), 24, 8) * bitfieldExtract(int(b), 24, 8);
+    return sum;
+}
+
+void main()
+{
+    int n = int(gl_GlobalInvocationID.x);
+    int m = int(gl_GlobalInvocationID.y);
+
+    if (m >= M || n >= N)
+        return;
+
+    int sum = 0;
+    for (int j = 0; j < K4; ++j)
+        sum += dot4(A_packed[m * K4 + j], BT_packed[n * K4 + j]);
+
+    C[m * N + n] = sum;
+}

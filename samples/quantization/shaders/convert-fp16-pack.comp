@@ -1,0 +1,21 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) buffer InputBuffer  { float inputData[]; };
+layout(set = 0, binding = 1) buffer OutputBuffer { uint  outputData[]; };
+
+layout(push_constant) uniform PushConstants {
+    int numPairs;  // numElements / 2
+};
+
+void main()
+{
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= numPairs)
+        return;
+
+    float a = inputData[idx * 2 + 0];
+    float b = inputData[idx * 2 + 1];
+    outputData[idx] = packHalf2x16(vec2(a, b));
+}
