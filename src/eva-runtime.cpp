@@ -1061,7 +1061,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
                 return strcmp(props.extensionName, "VK_NV_cooperative_matrix2") == 0;
             });
 
-#ifdef VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_2_FEATURES_NV
+#ifdef VK_NV_COOPERATIVE_MATRIX_2_SPEC_VERSION
         if (coopmat2_ext_available)
         {
             // Query coopmat2 features (llama.cpp style)
@@ -1329,15 +1329,28 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             .maintenance4 = VK_TRUE,
         });
 
-        chain.add(VkPhysicalDeviceRobustness2FeaturesEXT{
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
-            .nullDescriptor = VK_TRUE,
+        chain.add(VkPhysicalDeviceVulkan11Features{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+            .storageBuffer16BitAccess = VK_TRUE,
+        });
+        chain.add(VkPhysicalDeviceShaderFloat16Int8Features{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES,
+            .shaderFloat16 = VK_TRUE,
+        });
+        chain.add(VkPhysicalDeviceBufferDeviceAddressFeatures{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
+            .bufferDeviceAddress = VK_TRUE,
         });
 
-        chain.add(VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT{
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT,
-            .graphicsPipelineLibrary = VK_TRUE,
-        });
+        // chain.add(VkPhysicalDeviceRobustness2FeaturesEXT{
+        //     .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
+        //     .nullDescriptor = VK_TRUE,
+        // });
+
+        // chain.add(VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT{
+        //     .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT,
+        //     .graphicsPipelineLibrary = VK_TRUE,
+        // });
         // Optional features
         if (supportsAtomicFloat) {
             chain.add(VkPhysicalDeviceShaderAtomicFloatFeaturesEXT{
@@ -1367,7 +1380,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         // VK_KHR_cooperative_matrix for Tensor Core GEMM
         if (settings.enableCooperativeMatrix && cooperative_matrix_supported)
         {
-#ifdef VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR
+#ifdef VK_KHR_cooperative_matrix
             chain.add(VkPhysicalDeviceCooperativeMatrixFeaturesKHR{
                 .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR,
                 .cooperativeMatrix = VK_TRUE,
@@ -1380,7 +1393,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             // Enable all features if supported (detected in extension query phase)
             if (coopmat2_supported)
             {
-#ifdef VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_2_FEATURES_NV
+#ifdef VK_NV_COOPERATIVE_MATRIX_2_SPEC_VERSION
                 chain.add(VkPhysicalDeviceCooperativeMatrix2FeaturesNV{
                     .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_2_FEATURES_NV,
                     .cooperativeMatrixWorkgroupScope = VK_TRUE,
