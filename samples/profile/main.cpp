@@ -1,3 +1,5 @@
+// This sample requires EVA_ENABLE_PERFORMANCE_QUERY.
+// Configure with: cmake -DEVA_ENABLE_PERFORMANCE_QUERY=ON ..
 #include "eva-runtime.h"
 #include <cstdio>
 #include <cstring>
