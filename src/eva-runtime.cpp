@@ -688,6 +688,7 @@ struct DescriptorSet::Impl {
     const VkDescriptorSet vkDescSet;
     const DescriptorSetLayout layout;
     const Device device;
+    std::vector<VkBufferView> ownedBufferViews;
 
     Impl(VkDescriptorSet vkDescSet,
         DescriptorSetLayout layout,
@@ -695,6 +696,12 @@ struct DescriptorSet::Impl {
     : vkDescSet(vkDescSet)
     , layout(layout)
     , device(device) {}
+
+    ~Impl()
+    {
+        for (auto bv : ownedBufferViews)
+            vkDestroyBufferView(device.impl().vkDevice, bv, nullptr);
+    }
 };
 
 
@@ -970,6 +977,11 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES,
     });
 
+    // Provided by VK_VERSION_1_3
+    auto& qMaintenance4 = queryChain.add(VkPhysicalDeviceMaintenance4Features{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES,
+    });
+
     // Provided by VK_EXT_shader_atomic_float
     auto* qAtomicFloat = !supportsExt(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME)
         ? nullptr : &queryChain.add(VkPhysicalDeviceShaderAtomicFloatFeaturesEXT{
@@ -1127,6 +1139,16 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             .hostQueryReset = VK_TRUE,
         });
         enabledFeatures.hostQueryReset = true;
+    }
+
+    // Provided by VK_VERSION_1_3 — required for SPIR-V LocalSizeId (vulkan1.3 target)
+    // No enabledFeatures flag needed — not queried at runtime
+    if (qMaintenance4.maintenance4)
+    {
+        chain.add(VkPhysicalDeviceMaintenance4Features{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES,
+            .maintenance4 = VK_TRUE,
+        });
     }
 
 #ifdef EVA_ENABLE_PERFORMANCE_QUERY
@@ -3626,9 +3648,15 @@ DescriptorSet DescriptorSet::write(
         case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
             return 2;  // acceleration structure
 #endif
+        case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+        case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+            return 3;  // texel buffer
         default: return -1;
         }
     };
+
+    std::vector<VkBufferView> bufferViews;
+    bufferViews.reserve(descriptors.size());
 
     while(iter != bindingInfos.end()) 
     {
@@ -3726,8 +3754,34 @@ DescriptorSet DescriptorSet::write(
         }
 #endif
 
+        else if (t == 3)
+        {
+            writes.back().pTexelBufferView = bufferViews.data() + bufferViews.size();
+
+            for (uint32_t i = 0; i < consecutiveDescCount; ++i)
+            {
+                auto& desc = std::get<TexelBufferDescriptor>(descriptors[consumedDescriptors + i]);
+
+                EVA_ASSERT(desc.buffer || impl().device.impl().features.nullDescriptor);
+
+                uint64_t bufSize = (desc.size == EVA_WHOLE_SIZE) ? desc.buffer.size() - desc.offset : desc.size;
+
+                VkBufferViewCreateInfo viewInfo = {
+                    .sType  = VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO,
+                    .buffer = desc.buffer.impl().vkBuffer,
+                    .format = (VkFormat)(uint32_t)desc.format,
+                    .offset = desc.offset,
+                    .range  = bufSize,
+                };
+
+                VkBufferView view;
+                ASSERT_SUCCESS(vkCreateBufferView(impl().device.impl().vkDevice, &viewInfo, nullptr, &view));
+                bufferViews.push_back(view);
+            }
+        }
+
         else
-            EVA_ASSERT(false); 
+            EVA_ASSERT(false);
 
         consumedDescriptors += consecutiveDescCount;
         startArrayOffset = 0;
@@ -3736,8 +3790,18 @@ DescriptorSet DescriptorSet::write(
             break;
     }
     EVA_ASSERT(consumedDescriptors == descriptors.size()); // If given shader data has not been fully consumed, it is considered as an error.
-    
+
     vkUpdateDescriptorSets(impl().device.impl().vkDevice, (uint32_t)writes.size(), writes.data(), 0, nullptr);
+
+    // Transfer buffer view ownership to descriptor set (must remain valid while in use)
+    if (!bufferViews.empty())
+    {
+        // Destroy previous buffer views if any (from prior write() call)
+        for (auto bv : impl().ownedBufferViews)
+            vkDestroyBufferView(impl().device.impl().vkDevice, bv, nullptr);
+        impl().ownedBufferViews = std::move(bufferViews);
+    }
+
     return *this;
 }
 

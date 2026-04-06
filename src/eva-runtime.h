@@ -155,7 +155,8 @@ using SubmissionBatchInfo = std::tuple<
 
 struct BufferDescriptor;
 struct ImageDescriptor;
-using Descriptor = std::variant<BufferDescriptor, ImageDescriptor, AccelerationStructure>;
+struct TexelBufferDescriptor;
+using Descriptor = std::variant<BufferDescriptor, ImageDescriptor, AccelerationStructure, TexelBufferDescriptor>;
 
 
 
@@ -859,6 +860,16 @@ struct BufferDescriptor {
     : buffer(buffer), offset(0), size(EVA_WHOLE_SIZE) {}
 
     BufferDescriptor(BufferRange range);
+};
+
+struct TexelBufferDescriptor {
+    Buffer buffer;
+    FORMAT format;
+    uint64_t offset;
+    uint64_t size;
+
+    explicit TexelBufferDescriptor(Buffer buffer, FORMAT format = FORMAT::R32_SFLOAT)
+    : buffer(buffer), format(format), offset(0), size(EVA_WHOLE_SIZE) {}
 };
 
 
