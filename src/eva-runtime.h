@@ -265,6 +265,10 @@ public:
     Window createWindow(WindowCreateInfo info);
     void destroyWindow(Window window);
 #endif
+
+    // Native handle escape hatch (for ImGui / external libraries).
+    // Returns VkInstance — cast at the call site.
+    void* nativeInstance() const;
 };
 
 
@@ -332,6 +336,10 @@ public:
     AccelerationStructure createAccelerationStructure(const AsCreateInfo& info) ;
 #endif
 
+    // Native handle escape hatch.
+    // Returns VkPhysicalDevice / VkDevice — cast at the call site.
+    void* nativePhysicalDevice() const;
+    void* nativeDevice() const;
 };
 
 
@@ -366,6 +374,9 @@ public:
     );
 
     Queue waitIdle();
+
+    // Native handle escape hatch. Returns VkQueue.
+    void* nativeQueue() const;
 };
 
 
@@ -529,6 +540,21 @@ public:
         const std::vector<AsBuildInfo>& infos
     );
 #endif
+
+    // Dynamic rendering wrappers (Vulkan 1.3 / VK_KHR_dynamic_rendering).
+    // For use with external graphics-pipeline drivers (e.g., ImGui).
+    // depth/stencil and resolve attachments not supported.
+    // ColorAttachment is defined at file scope below (after ImageView).
+    CommandBuffer beginRendering(
+        const struct ColorAttachment* colorAttachments,
+        uint32_t colorAttachmentCount,
+        uint32_t width, uint32_t height
+    );
+
+    CommandBuffer endRendering();
+
+    // Native handle escape hatch. Returns VkCommandBuffer.
+    void* nativeCommandBuffer() const;
 };
 
 
@@ -622,12 +648,28 @@ public:
     // operator ImageMemoryBarrier() const;
     // ImageMemoryBarrier operator/(IMAGE_LAYOUT newLayout) const;
     ImageMemoryBarrier operator()(IMAGE_LAYOUT oldLayout, IMAGE_LAYOUT newLayout) const;
+
+    // Native handle escape hatch. Returns VkImage.
+    void* nativeImage() const;
+    FORMAT format() const;
 };
 
 
 class ImageView {
     VULKAN_CLASS_COMMON2(ImageView)
 public:
+
+    // Native handle escape hatch. Returns VkImageView.
+    void* nativeImageView() const;
+};
+
+
+// Used by CommandBuffer::beginRendering. Defined here so ImageView is complete.
+struct ColorAttachment {
+    ImageView view;
+    IMAGE_LAYOUT layout = IMAGE_LAYOUT::COLOR_ATTACHMENT;
+    bool        clear = false;
+    float       clearColor[4] = {0, 0, 0, 0};
 };
 
 
@@ -682,6 +724,9 @@ public:
             return std::make_tuple(sets[I]...);
         }(std::index_sequence_for<Layouts...>{});
     }
+
+    // Native handle escape hatch. Returns VkDescriptorPool.
+    void* nativeDescriptorPool() const;
 };
 
 
@@ -864,7 +909,7 @@ struct BufferDescriptor {
 
 struct ImageDescriptor {
     std::optional<ImageView> imageView;
-    std::optional<Sampler> sampler; 
+    std::optional<Sampler> sampler;
     IMAGE_LAYOUT imageLayout;
 
     ImageDescriptor(Image image)
@@ -1368,6 +1413,8 @@ struct SYNC_SCOPE {
     inline static T RAYTRACING_WRITE    = {PIPELINE_STAGE::RAY_TRACING_SHADER, ACCESS::SHADER_WRITE};
     inline static T TRANSFER_SRC        = {PIPELINE_STAGE::TRANSFER, ACCESS::TRANSFER_READ};
     inline static T TRANSFER_DST        = {PIPELINE_STAGE::TRANSFER, ACCESS::TRANSFER_WRITE};
+    inline static T COLOR_ATTACHMENT_READ  = {PIPELINE_STAGE::COLOR_ATTACHMENT_OUTPUT, ACCESS::COLOR_ATTACHMENT_READ};
+    inline static T COLOR_ATTACHMENT_WRITE = {PIPELINE_STAGE::COLOR_ATTACHMENT_OUTPUT, ACCESS::COLOR_ATTACHMENT_WRITE};
     inline static T ASBUILD_READ        = {PIPELINE_STAGE::ACCELERATION_STRUCTURE_BUILD, ACCESS::SHADER_READ};
     inline static T ASBUILD_READ_AS     = {PIPELINE_STAGE::ACCELERATION_STRUCTURE_BUILD, ACCESS::ACCELERATION_STRUCTURE_READ};
     inline static T ASBUILD_WRITE_AS    = {PIPELINE_STAGE::ACCELERATION_STRUCTURE_BUILD, ACCESS::ACCELERATION_STRUCTURE_WRITE};
@@ -1724,10 +1771,6 @@ public:
     std::pair<CommandBuffer, Semaphore> getNextPresentingContext(Semaphore onNextScImageWritable) const;
     void present(Queue queue) const;
 
-    // Returns the swapchain image index that was acquired by the most recent
-    // getNextPresentingContext() call (valid until present() is called).
-    uint32_t presentingImageIndex() const;
-
     bool shouldClose() const;
     void pollEvents() const;
 
@@ -1741,6 +1784,19 @@ public:
     void setKeyCallback(void (*callback)(int key, int action, int mods));
     void setCursorPosCallback(void (*callback)(double xpos, double ypos));
     void setScrollCallback(void (*callback)(double xoffset, double yoffset));
+
+    // Native handle escape hatch.
+    // nativeGLFWWindow() returns GLFWwindow* — cast at the call site.
+    void* nativeGLFWWindow() const;
+    uint32_t swapChainImageCount() const;
+    FORMAT swapChainImageFormat() const;
+    uint32_t width() const;
+    uint32_t height() const;
+
+    // Index of the swapchain image currently being prepared for presentation.
+    // Set by getNextPresentingContext, cleared after present().
+    // Returns uint32_t(-1) if no presentation is in flight.
+    uint32_t presentingImageIndex() const;
 };
 #endif // EVA_ENABLE_WINDOW
 

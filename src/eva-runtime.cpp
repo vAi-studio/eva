@@ -267,6 +267,7 @@ struct Device::Impl {
 
     struct Features {
         bool synchronization2 = false;
+        bool dynamicRendering = false;
         bool nullDescriptor = false;
         bool graphicsPipelineLibrary = false;
 
@@ -835,6 +836,11 @@ uint32_t Runtime::deviceCount() const
     return (uint32_t)impl().devices.size();
 }
 
+void* Runtime::nativeInstance() const
+{
+    return (void*)impl().instance;
+}
+
 Device Runtime::device(int gpuIndex)
 {
     if (gpuIndex < 0)
@@ -956,6 +962,11 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     auto& qSync2 = queryChain.add(VkPhysicalDeviceSynchronization2Features{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES,
     });
+
+    // Provided by VK_VERSION_1_3
+    auto& qDynamicRendering = queryChain.add(VkPhysicalDeviceDynamicRenderingFeatures{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES,
+    });
     
     // Provided by VK_VERSION_1_2
     auto& qFloat16Int8 = queryChain.add(VkPhysicalDeviceShaderFloat16Int8Features{
@@ -1059,6 +1070,16 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             .synchronization2 = VK_TRUE,
         });
         enabledFeatures.synchronization2 = true;
+    }
+
+    // Provided by VK_VERSION_1_3
+    if (qDynamicRendering.dynamicRendering)
+    {
+        chain.add(VkPhysicalDeviceDynamicRenderingFeatures{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES,
+            .dynamicRendering = VK_TRUE,
+        });
+        enabledFeatures.dynamicRendering = true;
     }
 
     // Provided by VK_EXT_shader_atomic_float
@@ -1412,6 +1433,11 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         throw std::runtime_error("The selected physical device does not support synchronization2 feature, which is required by the runtime.");
     }
 
+    if (!pImpl->features.dynamicRendering)
+    {
+        throw std::runtime_error("The selected physical device does not support dynamicRendering feature, which is required by the runtime.");
+    }
+
 #ifdef EVA_ENABLE_RAYTRACING
     if (settings.enableRaytracing)
     {
@@ -1545,9 +1571,19 @@ void Device::reportAssignedQueues() const
     fflush(stdout);
 }
 
-uint32_t Device::queueCount(QueueType type) const 
-{ 
+uint32_t Device::queueCount(QueueType type) const
+{
     return impl().qCount[type];  // 0 if and only if impl().qfIndex[type] == uint32_t(-1)
+}
+
+void* Device::nativePhysicalDevice() const
+{
+    return (void*)impl().vkPhysicalDevice;
+}
+
+void* Device::nativeDevice() const
+{
+    return (void*)impl().vkDevice;
 }
 
 // bool Device::supportPresent(QueueType type) const 
@@ -1599,9 +1635,14 @@ QueueType Queue::type() const
     return _type;
 }
 
-uint32_t Queue::queueFamilyIndex() const 
-{ 
-    return impl().qfIndex; 
+uint32_t Queue::queueFamilyIndex() const
+{
+    return impl().qfIndex;
+}
+
+void* Queue::nativeQueue() const
+{
+    return (void*)impl().vkQueue;
 }
 
 uint32_t Queue::index() const 
@@ -1865,6 +1906,11 @@ QueueType CommandBuffer::type() const
 uint32_t CommandBuffer::queueFamilyIndex() const
 {
     return impl().qfIndex;
+}
+
+void* CommandBuffer::nativeCommandBuffer() const
+{
+    return (void*)impl().vkCmdBuffer;
 }
 
 CommandBuffer CommandBuffer::submit(uint32_t index) const
@@ -2484,6 +2530,46 @@ CommandBuffer CommandBuffer::dispatch(uint32_t groupCountX, uint32_t groupCountY
 {
     EVA_ASSERT(type() <= queue_compute);  // VUID-vkCmdDispatch-commandBuffer-cmdpool (Implicit)
     vkCmdDispatch(impl().vkCmdBuffer, groupCountX, groupCountY, groupCountZ);
+    return *this;
+}
+
+CommandBuffer CommandBuffer::beginRendering(
+    const ColorAttachment* colorAttachments,
+    uint32_t colorAttachmentCount,
+    uint32_t width, uint32_t height)
+{
+    EVA_ASSERT(type() == queue_graphics);
+
+    std::vector<VkRenderingAttachmentInfo> vkColorAtts(colorAttachmentCount);
+    for (uint32_t i = 0; i < colorAttachmentCount; ++i)
+    {
+        const auto& a = colorAttachments[i];
+        VkClearValue clearValue{};
+        std::memcpy(clearValue.color.float32, a.clearColor, sizeof(a.clearColor));
+        vkColorAtts[i] = VkRenderingAttachmentInfo{
+            .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .imageView   = a.view.impl().vkImageView,
+            .imageLayout = (VkImageLayout)(uint32_t)a.layout,
+            .loadOp      = a.clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD,
+            .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
+            .clearValue  = clearValue,
+        };
+    }
+
+    VkRenderingInfo info{
+        .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
+        .renderArea           = { {0, 0}, {width, height} },
+        .layerCount           = 1,
+        .colorAttachmentCount = (uint32_t)vkColorAtts.size(),
+        .pColorAttachments    = vkColorAtts.data(),
+    };
+    vkCmdBeginRendering(impl().vkCmdBuffer, &info);
+    return *this;
+}
+
+CommandBuffer CommandBuffer::endRendering()
+{
+    vkCmdEndRendering(impl().vkCmdBuffer);
     return *this;
 }
 
@@ -3403,6 +3489,21 @@ ImageView Image::view(ImageViewDesc&& desc) const
     return impl().imageViews.emplace(std::move(desc), new ImageView::Impl*(pImpl)).first->second;
 }
 
+void* Image::nativeImage() const
+{
+    return (void*)impl().vkImage;
+}
+
+FORMAT Image::format() const
+{
+    return impl().format;
+}
+
+void* ImageView::nativeImageView() const
+{
+    return (void*)impl().vkImageView;
+}
+
 
 /////////////////////////////////////////////////////////////////////////////////////////
 // Sampler
@@ -3579,17 +3680,22 @@ std::vector<DescriptorSet> DescriptorPool::operator()(std::vector<DescriptorSetL
     });
 
     std::vector<DescriptorSet> descSets(setLayouts.size());
-    for (uint32_t i = 0; i < setLayouts.size(); ++i) 
+    for (uint32_t i = 0; i < setLayouts.size(); ++i)
     {
         auto pImpl = new DescriptorSet::Impl(
             vkDescSets[i],
             setLayouts[i],
             impl().device);
-            
+
         descSets[i] = impl().descSets.emplace_back(new DescriptorSet::Impl*(pImpl));
     }
 
     return descSets;
+}
+
+void* DescriptorPool::nativeDescriptorPool() const
+{
+    return (void*)impl().vkDescPool;
 }
 
 
@@ -3714,6 +3820,12 @@ DescriptorSet DescriptorSet::write(
                 else if (descriptorType == DESCRIPTOR_TYPE::COMBINED_IMAGE_SAMPLER)
                 {
                     EVA_ASSERT((desc.imageView || impl().device.impl().features.nullDescriptor) && desc.sampler);
+                }
+                else if (descriptorType == DESCRIPTOR_TYPE::SAMPLER)
+                {
+                    // Sampler-only descriptor: only the sampler is meaningful;
+                    // imageView/imageLayout are ignored by the driver.
+                    EVA_ASSERT(desc.sampler.has_value());
                 }
                 else
                 {
@@ -4224,11 +4336,6 @@ void Window::present(Queue queue) const
     present(queue, {impl().presentableSemaphores[imageIndex]}, imageIndex);
 }
 
-uint32_t Window::presentingImageIndex() const
-{
-    return impl().presentingImgIdx;
-}
-
 bool Window::shouldClose() const
 {
     return glfwWindowShouldClose((GLFWwindow*)impl().pWindow);
@@ -4321,6 +4428,36 @@ void Window::setScrollCallback(void (*callback)(double xoffset, double yoffset))
     // Set user pointer to Window::Impl
     glfwSetWindowUserPointer((GLFWwindow*)impl().pWindow, const_cast<Window::Impl*>(&impl()));
     glfwSetScrollCallback((GLFWwindow*)impl().pWindow, glfwCallback);
+}
+
+void* Window::nativeGLFWWindow() const
+{
+    return (void*)const_cast<GLFWwindow*>(impl().pWindow);
+}
+
+uint32_t Window::swapChainImageCount() const
+{
+    return (uint32_t)impl().swapchainImages.size();
+}
+
+FORMAT Window::swapChainImageFormat() const
+{
+    return impl().swapchainImageFormat;
+}
+
+uint32_t Window::width() const
+{
+    return impl().width;
+}
+
+uint32_t Window::height() const
+{
+    return impl().height;
+}
+
+uint32_t Window::presentingImageIndex() const
+{
+    return impl().presentingImgIdx;
 }
 #endif // EVA_ENABLE_WINDOW
 

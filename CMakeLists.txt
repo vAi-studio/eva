@@ -97,7 +97,7 @@ PRIVATE
 # Window support
 if(EVA_ENABLE_WINDOW)
     target_compile_definitions(eva PUBLIC EVA_ENABLE_WINDOW)
-    target_link_libraries(eva PRIVATE glfw)
+    target_link_libraries(eva PUBLIC glfw)
 endif()
 
 # Android
