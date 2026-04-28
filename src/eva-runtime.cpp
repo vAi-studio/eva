@@ -273,7 +273,9 @@ struct Device::Impl {
         bool shaderFloat16 = false;
         bool storageBuffer16BitAccess = false;
         bool shaderBufferFloat32AtomicAdd = false;
-        
+
+        bool shaderSampledImageArrayNonUniformIndexing = false;
+
         bool hostQueryReset = false;
 #ifdef EVA_ENABLE_PERFORMANCE_QUERY
         bool performanceCounterQueryPools = false;
@@ -970,6 +972,12 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES,
     });
 
+    // Provided by VK_VERSION_1_2 (descriptor indexing — required by shaders that use
+    // nonuniformEXT() for sampler array indexing, e.g. bindless texture atlases).
+    auto& qDescIndexing = queryChain.add(VkPhysicalDeviceDescriptorIndexingFeatures{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES,
+    });
+
     // Provided by VK_EXT_shader_atomic_float
     auto* qAtomicFloat = !supportsExt(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME)
         ? nullptr : &queryChain.add(VkPhysicalDeviceShaderAtomicFloatFeaturesEXT{
@@ -1127,6 +1135,16 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             .hostQueryReset = VK_TRUE,
         });
         enabledFeatures.hostQueryReset = true;
+    }
+
+    // Provided by VK_VERSION_1_2 (descriptor indexing)
+    if (qDescIndexing.shaderSampledImageArrayNonUniformIndexing)
+    {
+        chain.add(VkPhysicalDeviceDescriptorIndexingFeatures{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES,
+            .shaderSampledImageArrayNonUniformIndexing = VK_TRUE,
+        });
+        enabledFeatures.shaderSampledImageArrayNonUniformIndexing = true;
     }
 
 #ifdef EVA_ENABLE_PERFORMANCE_QUERY
@@ -3617,11 +3635,12 @@ DescriptorSet DescriptorSet::write(
         case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
         case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
             return 0;   // buffer
+        case VK_DESCRIPTOR_TYPE_SAMPLER:
         case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
         case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
         case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
         // case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
-            return 1;  // image
+            return 1;  // image / sampler
 #ifdef EVA_ENABLE_RAYTRACING
         case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
             return 2;  // acceleration structure
@@ -3688,7 +3707,11 @@ DescriptorSet DescriptorSet::write(
                 // imageInfos.push_back(std::get<ImageDescriptor>(descriptors[consumedDescriptors + i]).descInfo());
                 auto& desc = std::get<ImageDescriptor>(descriptors[consumedDescriptors + i]);
                 
-                if (descriptorType == DESCRIPTOR_TYPE::COMBINED_IMAGE_SAMPLER)
+                if (descriptorType == DESCRIPTOR_TYPE::SAMPLER)
+                {
+                    EVA_ASSERT(desc.sampler.has_value());
+                }
+                else if (descriptorType == DESCRIPTOR_TYPE::COMBINED_IMAGE_SAMPLER)
                 {
                     EVA_ASSERT((desc.imageView || impl().device.impl().features.nullDescriptor) && desc.sampler);
                 }
@@ -4199,6 +4222,11 @@ void Window::present(Queue queue) const
     impl().presentingImgIdx = uint32_t(-1);
 
     present(queue, {impl().presentableSemaphores[imageIndex]}, imageIndex);
+}
+
+uint32_t Window::presentingImageIndex() const
+{
+    return impl().presentingImgIdx;
 }
 
 bool Window::shouldClose() const

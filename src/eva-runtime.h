@@ -874,6 +874,12 @@ struct ImageDescriptor {
     ImageDescriptor(ImageView imageView)
     : imageView(imageView)
     , imageLayout(IMAGE_LAYOUT::MAX_ENUM) {}
+
+    // Sampler-only descriptor (for VK_DESCRIPTOR_TYPE_SAMPLER bindings)
+    ImageDescriptor(Sampler sampler)
+    : imageView(std::nullopt)
+    , sampler(sampler)
+    , imageLayout(IMAGE_LAYOUT::UNDEFINED) {}
 };
 
 
@@ -1717,6 +1723,10 @@ public:
 
     std::pair<CommandBuffer, Semaphore> getNextPresentingContext(Semaphore onNextScImageWritable) const;
     void present(Queue queue) const;
+
+    // Returns the swapchain image index that was acquired by the most recent
+    // getNextPresentingContext() call (valid until present() is called).
+    uint32_t presentingImageIndex() const;
 
     bool shouldClose() const;
     void pollEvents() const;
