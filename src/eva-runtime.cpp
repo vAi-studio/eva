@@ -833,6 +833,40 @@ uint32_t Runtime::deviceCount() const
     return (uint32_t)impl().devices.size();
 }
 
+
+std::vector<PhysicalDeviceInfo> Runtime::enumeratePhysicalDevices() const
+{
+    auto physicalDevices = arrayFrom(vkEnumeratePhysicalDevices, impl().instance);
+
+    std::vector<PhysicalDeviceInfo> infos;
+    infos.reserve(physicalDevices.size());
+
+    for (auto pd : physicalDevices)
+    {
+        VkPhysicalDeviceProperties props{};
+        vkGetPhysicalDeviceProperties(pd, &props);
+        infos.push_back({
+            props.vendorID,
+            props.deviceID,
+            std::string(props.deviceName),
+        });
+    }
+    return infos;
+}
+
+
+PhysicalDeviceInfo Device::physicalDeviceInfo() const
+{
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(impl().vkPhysicalDevice, &props);
+    return {
+        props.vendorID,
+        props.deviceID,
+        std::string(props.deviceName),
+    };
+}
+
+
 Device Runtime::device(int gpuIndex)
 {
     if (gpuIndex < 0)

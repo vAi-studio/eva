@@ -247,6 +247,16 @@ enum class OwnershipTransferOpType {
 };
 
 
+// Lightweight, Vulkan-handle-free snapshot of a physical device's identity,
+// enough for the host to classify GPUs (vendor/family/model) without leaking
+// VkPhysicalDevice or VkPhysicalDeviceProperties into the public API.
+struct PhysicalDeviceInfo {
+    uint32_t    vendorID;
+    uint32_t    deviceID;
+    std::string deviceName;
+};
+
+
 class Runtime {
     VULKAN_CLASS_COMMON
     ~Runtime();
@@ -254,12 +264,18 @@ class Runtime {
     Runtime(const Runtime&) = delete;
     Runtime& operator=(const Runtime&) = delete;
     Device createDevice(const DeviceSettings& settings);
-    
+
 public:
     static Runtime& get();    // singleton pattern
     uint32_t deviceCount() const;
-    Device device(int gpuIndex=-1); 
+    Device device(int gpuIndex=-1);
     Device device(DeviceSettings settings);
+
+    // Enumerate identity info for every physical device the Vulkan instance
+    // can see, in the same order vkEnumeratePhysicalDevices reports them.
+    // Lets host code (e.g. per-GPU tile policy) classify hardware without
+    // touching Vulkan handles directly.
+    std::vector<PhysicalDeviceInfo> enumeratePhysicalDevices() const;
 
 #ifdef EVA_ENABLE_WINDOW
     Window createWindow(WindowCreateInfo info);
@@ -272,6 +288,10 @@ class Device {
     VULKAN_CLASS_COMMON2(Device)
 
 public:
+    // Identity of the underlying physical device (vendorID / deviceID / deviceName).
+    // Lets host code classify the *selected* GPU without enumerating again.
+    PhysicalDeviceInfo physicalDeviceInfo() const;
+
     void reportGPUQueueFamilies() const;
     void reportAssignedQueues() const;
 
