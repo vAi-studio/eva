@@ -1,0 +1,35 @@
+#version 450
+
+layout(local_size_x = 32, local_size_y = 32) in;
+
+layout(set = 0, binding = 0) buffer InputBuffer  { float inputData[]; };
+layout(set = 0, binding = 1) buffer OutputBuffer { uint  outputData[]; };
+
+layout(push_constant) uniform PushConstants {
+    int   rows;        // M for A, N for B^T
+    int   K4;          // K / 4
+    int   baseStride;  // 1 for A (consecutive k), N for B^T (column stride)
+    int   rowStride;   // K for A (row-major), 1 for B^T (column index)
+    float scale;
+};
+
+void main()
+{
+    int j = int(gl_GlobalInvocationID.x);  // packed K index
+    int i = int(gl_GlobalInvocationID.y);  // row (m or n)
+
+    if (j >= K4 || i >= rows)
+        return;
+
+    int base = i * rowStride + 4 * j * baseStride;
+
+    // quantize + pack 4 values into one uint32
+    uint packed = 0;
+    for (int p = 0; p < 4; ++p) {
+        float val = inputData[base + p * baseStride];
+        int q = clamp(int(round(val / scale)), -128, 127);
+        packed |= (uint(q) & 0xFFu) << (p * 8);
+    }
+
+    outputData[i * K4 + j] = packed;
+}

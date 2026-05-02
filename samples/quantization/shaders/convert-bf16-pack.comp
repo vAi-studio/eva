@@ -1,0 +1,23 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) buffer InputBuffer  { float inputData[]; };
+layout(set = 0, binding = 1) buffer OutputBuffer { uint  outputData[]; };
+
+layout(push_constant) uniform PushConstants {
+    int numPairs;  // numElements / 2
+};
+
+void main()
+{
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= numPairs)
+        return;
+
+    // BF16 = upper 16 bits of FP32 (truncation)
+    uint a_bits = floatBitsToUint(inputData[idx * 2 + 0]) >> 16;
+    uint b_bits = floatBitsToUint(inputData[idx * 2 + 1]) >> 16;
+
+    outputData[idx] = a_bits | (b_bits << 16);
+}

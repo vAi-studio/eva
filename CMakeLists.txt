@@ -14,6 +14,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/bin)
 option(EVA_BUILD_SAMPLES "Build EVA sample projects" OFF)
 option(EVA_ENABLE_WINDOW "Enable window support" OFF)
 option(EVA_ENABLE_RAYTRACING "Enable raytracing support" OFF)
+option(EVA_ENABLE_PERFORMANCE_QUERY "Enable performance query support" OFF)
 
 # Find Vulkan
 find_package(Vulkan REQUIRED)
@@ -102,6 +103,11 @@ endif()
 # Android
 if(ANDROID)
     target_link_libraries(eva PRIVATE android)
+endif()
+
+# Performance query support
+if(EVA_ENABLE_PERFORMANCE_QUERY)
+    target_compile_definitions(eva PUBLIC EVA_ENABLE_PERFORMANCE_QUERY)
 endif()
 
 # Raytracing support
@@ -243,6 +249,10 @@ endfunction()
 if(EVA_BUILD_SAMPLES)
     message(STATUS "[EVA] Building sample projects...")
     add_subdirectory(samples/matmul)
+    add_subdirectory(samples/quantization)
+    if(EVA_ENABLE_PERFORMANCE_QUERY)
+        add_subdirectory(samples/profile)
+    endif()
     if(EVA_ENABLE_RAYTRACING AND EVA_ENABLE_WINDOW)
         add_subdirectory(samples/raytracing)
     endif()

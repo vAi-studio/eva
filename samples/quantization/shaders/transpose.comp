@@ -1,0 +1,22 @@
+#version 450
+
+layout(local_size_x = 32, local_size_y = 32) in;
+
+layout(set = 0, binding = 0) buffer InputBuffer  { int inputData[]; };
+layout(set = 0, binding = 1) buffer OutputBuffer { int outputData[]; };
+
+layout(push_constant) uniform PushConstants {
+    int rows;
+    int cols;
+};
+
+void main()
+{
+    int col = int(gl_GlobalInvocationID.x);
+    int row = int(gl_GlobalInvocationID.y);
+
+    if (row >= rows || col >= cols)
+        return;
+
+    outputData[col * rows + row] = inputData[row * cols + col];
+}

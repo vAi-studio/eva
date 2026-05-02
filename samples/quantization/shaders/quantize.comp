@@ -1,0 +1,35 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) buffer InputBuffer  { float inputData[]; };
+layout(set = 0, binding = 1) buffer OutputBuffer { int   outputData[]; };
+layout(set = 0, binding = 2) buffer MaxBuffer    { uint  maxAbsInt; };
+
+layout(push_constant) uniform PushConstants {
+    int   numElements;
+    int   mode;       // 0 = findMax, 1 = quantize
+    float scale;      // used in mode 1
+};
+
+void main()
+{
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= numElements)
+        return;
+
+    if (mode == 0) {
+        // Pass 1: find max absolute value
+        // For non-negative IEEE 754 floats, uint bit comparison preserves ordering
+        float val = abs(inputData[idx]);
+        uint  valBits = floatBitsToUint(val);
+        atomicMax(maxAbsInt, valBits);
+    }
+    else {
+        // Pass 2: symmetric quantization to INT8 range
+        float val = inputData[idx];
+        int quantized = int(round(val / scale));
+        quantized = clamp(quantized, -128, 127);
+        outputData[idx] = quantized;
+    }
+}

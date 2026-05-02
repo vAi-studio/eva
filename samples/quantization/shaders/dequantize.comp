@@ -1,0 +1,20 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) buffer InputBuffer  { int   inputData[]; };
+layout(set = 0, binding = 1) buffer OutputBuffer { float outputData[]; };
+
+layout(push_constant) uniform PushConstants {
+    int   numElements;
+    float scale;       // combined scale = scaleA * scaleB
+};
+
+void main()
+{
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= numElements)
+        return;
+
+    outputData[idx] = float(inputData[idx]) * scale;
+}

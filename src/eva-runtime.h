@@ -70,11 +70,11 @@ class DescriptorSetLayout;
 class PipelineLayout;
 class DescriptorPool;
 class DescriptorSet;
+class QueryPool;
 
 class Window;
 class RaytracingPipeline;
 class AccelerationStructure;
-class QueryPool;
 
 
 #define VULKAN_FRIENDS \
@@ -96,9 +96,9 @@ class QueryPool;
     friend class PipelineLayout; \
     friend class DescriptorPool; \
     friend class DescriptorSet; \
+    friend class QueryPool; \
     friend class Window; \
     friend class AccelerationStructure; \
-    friend class QueryPool; \
     friend class Submitting;
 
 
@@ -257,10 +257,30 @@ struct DeviceCapabilities {
     uint64_t deviceLocalMemorySize;
 };
 
+#ifdef EVA_ENABLE_PERFORMANCE_QUERY
+struct PerformanceCounter {
+    std::string name;
+    std::string category;
+    std::string description;
+    PERFORMANCE_COUNTER_UNIT unit;
+    PERFORMANCE_COUNTER_STORAGE storage;
+    PERFORMANCE_COUNTER_SCOPE scope;
+    PERFORMANCE_COUNTER_DESCRIPTION flags;
+};
+
+union PerformanceCounterResult {
+    int32_t  i32;
+    int64_t  i64;
+    uint32_t u32;
+    uint64_t u64;
+    float    f32;
+    double   f64;
+};
+#endif
 
 enum QueueType {
-    queue_graphics, 
-    queue_compute, 
+    queue_graphics,
+    queue_compute,
     queue_transfer, 
     queue_max,
 };
@@ -334,9 +354,20 @@ public:
     PipelineLayout createPipelineLayout(PipelineLayoutDesc desc);
     DescriptorPool createDescriptorPool(const DescriptorPoolCreateInfo& info);
 
-    // Query Pool for timestamp queries
+    // Timestamp Query Pool
     QueryPool createQueryPool(uint32_t queryCount);
     bool supportsTimestampQueries() const;
+    QueryPool createTimestampQueryPool(uint32_t queryCount);
+
+#ifdef EVA_ENABLE_PERFORMANCE_QUERY
+    // Performance Query (VK_KHR_performance_query)
+    bool supportsPerformanceQueries() const;
+    std::vector<PerformanceCounter> enumeratePerformanceCounters(QueueType type) const;
+    uint32_t getPerformanceQueryPasses(QueueType type, const std::vector<uint32_t>& counterIndices) const;
+    QueryPool createPerformanceQueryPool(QueueType type, const std::vector<uint32_t>& counterIndices, uint32_t queryCount=1);
+    void acquireProfilingLock(uint64_t timeout = uint64_t(-1));
+    void releaseProfilingLock();
+#endif
 
 #ifdef EVA_ENABLE_RAYTRACING
     RaytracingPipeline createRaytracingPipeline(const RaytracingPipelineCreateInfo& info);
@@ -515,9 +546,24 @@ public:
         uint32_t numThreadsInZ=1
     );
 
-    // Timestamp queries
-    CommandBuffer resetQueryPool(QueryPool pool, uint32_t firstQuery = 0, uint32_t queryCount = 0);
-    CommandBuffer writeTimestamp(PIPELINE_STAGE stage, QueryPool pool, uint32_t query);
+    // Query commands
+    CommandBuffer resetQueryPool(
+        QueryPool pool,
+        uint32_t firstQuery = 0,
+        uint32_t queryCount = 0);
+
+    CommandBuffer writeTimestamp(
+        PIPELINE_STAGE stage,
+        QueryPool pool,
+        uint32_t query);
+
+    CommandBuffer beginQuery(
+        QueryPool pool,
+        uint32_t query);
+
+    CommandBuffer endQuery(
+        QueryPool pool,
+        uint32_t query);
 
 #ifdef EVA_ENABLE_RAYTRACING
     CommandBuffer traceRays(
@@ -585,20 +631,6 @@ public:
 
 
 class GraphicsPipeline {};
-
-
-class QueryPool {
-    VULKAN_CLASS_COMMON2(QueryPool)
-public:
-    // Get timestamp results (returns timestamps in device ticks)
-    std::vector<uint64_t> getResults(uint32_t firstQuery, uint32_t queryCount = 0);
-
-    // Get elapsed time between two timestamps in milliseconds
-    double getElapsedMs(uint32_t startQuery, uint32_t endQuery);
-
-    // Get query count
-    uint32_t queryCount() const;
-};
 
 
 class ComputePipeline {
@@ -788,6 +820,15 @@ auto DescriptorPool::operator()(Layouts... layouts) requires (std::is_same_v<Lay
 }
 
 
+class QueryPool {
+    VULKAN_CLASS_COMMON2(QueryPool)
+public:
+    uint32_t queryCount() const;
+    void reset(uint32_t firstQuery = 0, uint32_t queryCount = 0);
+
+    std::vector<uint64_t> getResults(uint32_t firstQuery=0, uint32_t queryCount = 0);
+    double getElapsedMs(uint32_t startQuery, uint32_t endQuery);
+};
 
 
 

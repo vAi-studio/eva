@@ -1,0 +1,21 @@
+#version 450
+
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) buffer InputBuffer  { float     inputData[]; };
+layout(set = 0, binding = 1) buffer OutputBuffer { float16_t outputData[]; };
+
+layout(push_constant) uniform PushConstants {
+    int numElements;
+};
+
+void main()
+{
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= numElements)
+        return;
+
+    outputData[idx] = float16_t(inputData[idx]);
+}

@@ -563,6 +563,62 @@ enum class COLOR_SPACE : uint32_t {
 };
 
 
+enum class QUERY_RESULT : uint32_t {
+    NONE                = 0,
+    RESULT_64           = 0x00000001,
+    WAIT                = 0x00000002,
+    WITH_AVAILABILITY   = 0x00000004,
+    PARTIAL             = 0x00000008,
+    WITH_STATUS         = 0x00000010,
+};
+DEFINE_OPERATOR_OR(QUERY_RESULT)
+DEFINE_HAS_FLAGS(QUERY_RESULT)
+
+
+enum class PERFORMANCE_COUNTER_UNIT : uint32_t {
+    GENERIC          = 0,
+    PERCENTAGE       = 1,
+    NANOSECONDS      = 2,
+    BYTES            = 3,
+    BYTES_PER_SECOND = 4,
+    KELVIN           = 5,
+    WATTS            = 6,
+    VOLTS            = 7,
+    AMPS             = 8,
+    HERTZ            = 9,
+    CYCLES           = 10,
+    MAX_ENUM         = 0x7FFFFFFF,
+};
+
+
+enum class PERFORMANCE_COUNTER_SCOPE : uint32_t {
+    COMMAND_BUFFER = 0,
+    RENDER_PASS    = 1,
+    COMMAND        = 2,
+    MAX_ENUM       = 0x7FFFFFFF,
+};
+
+
+enum class PERFORMANCE_COUNTER_STORAGE : uint32_t {
+    INT32   = 0,
+    INT64   = 1,
+    UINT32  = 2,
+    UINT64  = 3,
+    FLOAT32 = 4,
+    FLOAT64 = 5,
+    MAX_ENUM = 0x7FFFFFFF,
+};
+
+
+enum class PERFORMANCE_COUNTER_DESCRIPTION : uint32_t {
+    NONE                    = 0,
+    PERFORMANCE_IMPACTING   = 0x00000001,
+    CONCURRENTLY_IMPACTED   = 0x00000002,
+};
+DEFINE_OPERATOR_OR(PERFORMANCE_COUNTER_DESCRIPTION)
+DEFINE_HAS_FLAGS(PERFORMANCE_COUNTER_DESCRIPTION)
+
+
 enum class GEOMETRY_TYPE : uint32_t {
     TRIANGLES   = 0,
     AABBS       = 1,

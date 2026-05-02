@@ -1,0 +1,44 @@
+#version 450
+
+layout(local_size_x = 32, local_size_y = 32) in;
+
+// A_packed: M x (K/2) uint32, 2 fp16 per uint32, packed along K
+// B_packed: K x (N/2) uint32, 2 fp16 per uint32, packed along N
+// C:        M x N float32 output (FP32 accumulation, no dequantize needed)
+layout(set = 0, binding = 0) buffer OutBuffer { float C[]; };
+layout(set = 0, binding = 1) buffer InBuffer  { uint  A_packed[]; };
+layout(set = 0, binding = 2) buffer Weight    { uint  B_packed[]; };
+
+layout(push_constant) uniform PushConstants {
+    int M;
+    int N;
+    int K;
+};
+
+void main()
+{
+    int n = int(gl_GlobalInvocationID.x);
+    int m = int(gl_GlobalInvocationID.y);
+
+    if (m >= M || n >= N)
+        return;
+
+    int K2 = K / 2;
+    int N2 = N / 2;
+    int n_half = n / 2;
+    int n_comp = n & 1;  // 0 -> .x, 1 -> .y
+
+    float sum = 0.0;
+
+    // Process 2 K-elements per iteration (packed in one uint32 from A)
+    for (int j = 0; j < K2; ++j) {
+        vec2 a = unpackHalf2x16(A_packed[m * K2 + j]);
+
+        vec2 b0 = unpackHalf2x16(B_packed[(2 * j)     * N2 + n_half]);
+        vec2 b1 = unpackHalf2x16(B_packed[(2 * j + 1) * N2 + n_half]);
+
+        sum += a.x * b0[n_comp] + a.y * b1[n_comp];
+    }
+
+    C[m * N + n] = sum;
+}

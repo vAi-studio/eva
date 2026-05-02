@@ -1,0 +1,25 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) buffer InputBuffer  { int  inputData[]; };
+layout(set = 0, binding = 1) buffer OutputBuffer { uint outputData[]; };
+
+layout(push_constant) uniform PushConstants {
+    int numPacked;  // total number of packed uint32 outputs (= numElements / 4)
+};
+
+void main()
+{
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= numPacked)
+        return;
+
+    uint base = idx * 4;
+    uint b0 = uint(inputData[base + 0]) & 0xFFu;
+    uint b1 = uint(inputData[base + 1]) & 0xFFu;
+    uint b2 = uint(inputData[base + 2]) & 0xFFu;
+    uint b3 = uint(inputData[base + 3]) & 0xFFu;
+
+    outputData[idx] = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+}

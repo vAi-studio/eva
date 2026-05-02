@@ -96,6 +96,14 @@ PFN_vkGetBufferDeviceAddressKHR vkGetBufferDeviceAddressKHR_ = nullptr;
 PFN_vkGetPipelineExecutablePropertiesKHR vkGetPipelineExecutablePropertiesKHR_ = nullptr;
 PFN_vkGetPipelineExecutableInternalRepresentationsKHR vkGetPipelineExecutableInternalRepresentationsKHR_ = nullptr;
 PFN_vkGetPipelineExecutableStatisticsKHR vkGetPipelineExecutableStatisticsKHR_ = nullptr;
+
+#ifdef EVA_ENABLE_PERFORMANCE_QUERY
+// VK_KHR_performance_query
+PFN_vkEnumeratePhysicalDeviceQueueFamilyPerformanceQueryCountersKHR vkEnumeratePerformanceQueryCountersKHR_ = nullptr;
+PFN_vkGetPhysicalDeviceQueueFamilyPerformanceQueryPassesKHR vkGetPerformanceQueryPassesKHR_ = nullptr;
+PFN_vkAcquireProfilingLockKHR vkAcquireProfilingLockKHR_ = nullptr;
+PFN_vkReleaseProfilingLockKHR vkReleaseProfilingLockKHR_ = nullptr;
+#endif
 #ifdef EVA_ENABLE_RAYTRACING
     PFN_vkCreateAccelerationStructureKHR vkCreateAccelerationStructureKHR_ = nullptr;
     PFN_vkDestroyAccelerationStructureKHR vkDestroyAccelerationStructureKHR_ = nullptr;
@@ -235,19 +243,6 @@ static void printGpuInfo(uint32_t order, VkPhysicalDevice physicalDevice)
     printf("\n");
 }
 
-static bool deviceSupportsExtensions(
-    VkPhysicalDevice physicalDevice, 
-    const std::vector<const char*>& extensions)
-{
-    auto deviceExtensions = arrayFrom(vkEnumerateDeviceExtensionProperties, physicalDevice, nullptr);
-
-    return std::all_of(extensions.begin(), extensions.end(), [&](const char* reqExtension) {
-        return std::any_of(deviceExtensions.begin(), deviceExtensions.end(), [&](const auto& props) {
-            return strcmp(props.extensionName, reqExtension) == 0;
-        });
-    });
-}
-
 static inline VkPhysicalDeviceMemoryProperties getMemorySpec(VkPhysicalDevice physicalDevice)
 {
     VkPhysicalDeviceMemoryProperties spec;
@@ -327,6 +322,26 @@ struct Device::Impl {
     const DeviceSettings settings;
     const DeviceCapabilities capabilities;
 
+    struct Features {
+        bool synchronization2 = false;
+        bool nullDescriptor = false;
+        bool graphicsPipelineLibrary = false;
+
+        bool shaderFloat16 = false;
+        bool storageBuffer16BitAccess = false;
+        bool shaderBufferFloat32AtomicAdd = false;
+
+        bool hostQueryReset = false;
+        bool bufferDeviceAddress = false;
+#ifdef EVA_ENABLE_PERFORMANCE_QUERY
+        bool performanceCounterQueryPools = false;
+#endif
+#ifdef EVA_ENABLE_RAYTRACING
+        bool accelerationStructure = false;
+        bool rayTracingPipeline = false;
+#endif
+    } features;
+
     std::set<CommandPool::Impl**> cmdPools;
     std::set<Fence::Impl**> fences;
     std::set<Semaphore::Impl**> semaphores;
@@ -355,6 +370,8 @@ struct Device::Impl {
     std::set<AccelerationStructure::Impl**> accelerationStructures;
 #endif
 
+
+    std::vector<const char*> enabledExtensions;
 
     CommandPool defaultCmdPool[queue_max][8] = {};
 
@@ -714,29 +731,29 @@ struct PipelineLayout::Impl {
 
 
 struct DescriptorPool::Impl {
-    const VkDevice vkDevice;
     const VkDescriptorPool vkDescPool;
+    const Device device;
     std::deque<DescriptorSet> descSets;
 
-    Impl(VkDevice vkDevice,             
-        VkDescriptorPool vkDescPool) 
-    : vkDevice(vkDevice)
-    , vkDescPool(vkDescPool) {}
+    Impl(VkDescriptorPool vkDescPool,
+        Device device)
+    : vkDescPool(vkDescPool)
+    , device(device) {}
     ~Impl();
 };
 
 
 struct DescriptorSet::Impl {
-    const VkDevice vkDevice;
     const VkDescriptorSet vkDescSet;
     const DescriptorSetLayout layout;
+    const Device device;
 
-    Impl(VkDevice vkDevice,            
-        VkDescriptorSet vkDescSet,
-        DescriptorSetLayout layout) 
-    : vkDevice(vkDevice)
-    , vkDescSet(vkDescSet)
-    , layout(layout) {}
+    Impl(VkDescriptorSet vkDescSet,
+        DescriptorSetLayout layout,
+        Device device)
+    : vkDescSet(vkDescSet)
+    , layout(layout)
+    , device(device) {}
 };
 
 
@@ -748,8 +765,40 @@ DescriptorPool::Impl::~Impl()
             delete *descSet.ppImpl;
         delete descSet.ppImpl;
     }
-    vkDestroyDescriptorPool(vkDevice, vkDescPool, nullptr); 
+    vkDestroyDescriptorPool(device.impl().vkDevice, vkDescPool, nullptr);
 }
+
+
+struct QueryPool::Impl {
+    const Device device;
+    VkQueryPool vkQueryPool;
+    VkQueryType type;
+    uint32_t queryCount;
+    float timestampPeriod = 0;
+    uint32_t performanceCounterCount = 0;
+
+    Impl(Device device, VkQueryPool vkQueryPool, uint32_t queryCount, float timestampPeriod)
+    : device(device)
+    , vkQueryPool(vkQueryPool)
+    , type(VK_QUERY_TYPE_TIMESTAMP)
+    , queryCount(queryCount)
+    , timestampPeriod(timestampPeriod)
+    {}
+
+#ifdef EVA_ENABLE_PERFORMANCE_QUERY
+    Impl(Device device, VkQueryPool vkQueryPool, uint32_t queryCount, uint32_t counterCount)
+    : device(device)
+    , vkQueryPool(vkQueryPool)
+    , type(VK_QUERY_TYPE_PERFORMANCE_QUERY_KHR)
+    , queryCount(queryCount)
+    , performanceCounterCount(counterCount)
+    {}
+#endif
+
+    ~Impl() {
+        vkDestroyQueryPool(device.impl().vkDevice, vkQueryPool, nullptr);
+    }
+};
 
 
 #ifdef EVA_ENABLE_RAYTRACING
@@ -795,25 +844,6 @@ struct AccelerationStructure::Impl {
     }
 };
 #endif
-
-
-struct QueryPool::Impl {
-    VkDevice vkDevice;
-    VkQueryPool vkQueryPool;
-    uint32_t queryCount;
-    float timestampPeriod;  // nanoseconds per tick
-
-    Impl(VkDevice vkDevice, VkQueryPool vkQueryPool, uint32_t queryCount, float timestampPeriod)
-    : vkDevice(vkDevice)
-    , vkQueryPool(vkQueryPool)
-    , queryCount(queryCount)
-    , timestampPeriod(timestampPeriod)
-    {}
-
-    ~Impl() {
-        vkDestroyQueryPool(vkDevice, vkQueryPool, nullptr);
-    }
-};
 
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -967,52 +997,110 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     VkPhysicalDevice pd = physicalDevices[selected];
     auto qfProps = arrayFrom(vkGetPhysicalDeviceQueueFamilyProperties, pd);
 
-    // Query optional atomic float feature support
-    bool hasAtomicFloatExt = deviceSupportsExtensions(pd, {VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME});
-    bool supportsAtomicFloat = false;
-    if (hasAtomicFloatExt) {
-        VkPhysicalDeviceShaderAtomicFloatFeaturesEXT atomicFloatFeatures{};
-        atomicFloatFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT;
-
-        VkPhysicalDeviceFeatures2 features2{};
-        features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-        features2.pNext = &atomicFloatFeatures;
-        vkGetPhysicalDeviceFeatures2(pd, &features2);
-
-        supportsAtomicFloat = atomicFloatFeatures.shaderBufferFloat32AtomicAdd;
-    }
-    printf("        Atomic Float (shaderBufferFloat32AtomicAdd): %s\n", supportsAtomicFloat ? "Supported" : "Not Supported");
-    fflush(stdout);
-
-    // LocalSizeId in SPIR-V requires maintenance4 feature enabled.
-    VkPhysicalDeviceMaintenance4Features maintenance4Features{};
-    maintenance4Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES;
-    {
-        VkPhysicalDeviceFeatures2 features2{};
-        features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-        features2.pNext = &maintenance4Features;
-        vkGetPhysicalDeviceFeatures2(pd, &features2);
-    }
-    if (!maintenance4Features.maintenance4) {
-        throw std::runtime_error("The selected physical device does not support maintenance4 (required by LocalSizeId shaders).");
-    }
-
-    // Required extensions
-    std::vector<const char*> reqExtentions = {
-        VK_EXT_ROBUSTNESS_2_EXTENSION_NAME,
-        VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME,
-        VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME
+    auto supportedExtensions = arrayFrom(vkEnumerateDeviceExtensionProperties, pd, nullptr);
+    auto supportsExt = [&](const char* name) {
+        return std::any_of(supportedExtensions.begin(), supportedExtensions.end(), [&](const auto& ext) {
+            return strcmp(name, ext.extensionName) == 0;
+        });
     };
 
-    // Optional: shader atomic float
-    if (supportsAtomicFloat)
+    // Query phase: populate all feature structs with a single vkGetPhysicalDeviceFeatures2 call
+    PNextChain queryChain;
+
+    auto& features2Query = queryChain.add(VkPhysicalDeviceFeatures2{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+    });
+
+    // Provided by VK_VERSION_1_3
+    auto& qSync2 = queryChain.add(VkPhysicalDeviceSynchronization2Features{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES,
+    });
+
+    // Provided by VK_VERSION_1_2
+    auto& qFloat16Int8 = queryChain.add(VkPhysicalDeviceShaderFloat16Int8Features{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES,
+    });
+
+    // Provided by VK_VERSION_1_1
+    auto& q16BitStorage = queryChain.add(VkPhysicalDevice16BitStorageFeatures{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES,
+    });
+
+    // Provided by VK_VERSION_1_2
+    auto& qHostReset = queryChain.add(VkPhysicalDeviceHostQueryResetFeatures{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES,
+    });
+
+    auto& qMaintenance4 = queryChain.add(VkPhysicalDeviceMaintenance4Features{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES,
+    });
+
+    auto& qBDA = queryChain.add(VkPhysicalDeviceBufferDeviceAddressFeatures{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
+    });
+
+    // Provided by VK_EXT_shader_atomic_float
+    auto* qAtomicFloat = !supportsExt(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME)
+        ? nullptr : &queryChain.add(VkPhysicalDeviceShaderAtomicFloatFeaturesEXT{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT,
+        });
+
+    // Provided by VK_EXT_robustness2
+    auto* qRobustness2 = !supportsExt(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME)
+        ? nullptr : &queryChain.add(VkPhysicalDeviceRobustness2FeaturesEXT{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
+        });
+
+    // Provided by VK_EXT_graphics_pipeline_library
+    auto* qGpl = !supportsExt(VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME)
+        ? nullptr : &queryChain.add(VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT,
+        });
+
+    auto* qPipelineExecutableInfo =
+        !settings.enablePipelineExecutableInfo ||
+        !supportsExt(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME)
+            ? nullptr
+            : &queryChain.add(VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR,
+            });
+
+#ifdef EVA_ENABLE_PERFORMANCE_QUERY
+    // Provided by VK_KHR_performance_query
+    auto* qPerfQuery = !supportsExt(VK_KHR_PERFORMANCE_QUERY_EXTENSION_NAME)
+        ? nullptr : &queryChain.add(VkPhysicalDevicePerformanceQueryFeaturesKHR{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PERFORMANCE_QUERY_FEATURES_KHR,
+        });
+#endif
+
+#ifdef EVA_ENABLE_RAYTRACING
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR* qAccelStruct = nullptr;
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR* qRtPipeline = nullptr;
+    if (settings.enableRaytracing)
     {
-        reqExtentions.push_back(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME);
+        // Provided by VK_KHR_acceleration_structure
+        qAccelStruct = !supportsExt(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME)
+            ? nullptr : &queryChain.add(VkPhysicalDeviceAccelerationStructureFeaturesKHR{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR,
+            });
+        // Provided by VK_KHR_ray_tracing_pipeline
+        qRtPipeline = !supportsExt(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME)
+            ? nullptr : &queryChain.add(VkPhysicalDeviceRayTracingPipelineFeaturesKHR{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR,
+            });
     }
-    else
-    {
-        printf("[EVA] VK_EXT_shader_atomic_float is not supported on this device. Atomic float path disabled.\n");
-    }
+#endif
+
+    vkGetPhysicalDeviceFeatures2(pd, &features2Query);
+
+    // Build reqExtentions and device creation chain based on query results
+    std::vector<const char*> reqExtentions;
+    PNextChain chain;
+    Device::Impl::Features enabledFeatures{};
+
+    chain.add(VkPhysicalDeviceFeatures2{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+    });
 
 #ifdef EVA_ENABLE_WINDOW
     if (settings.enableWindow)
@@ -1020,24 +1108,189 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         bool presentSupport = false;
         for (uint32_t i = 0; i < qfProps.size(); ++i)
             presentSupport |= (bool) glfwGetPhysicalDevicePresentationSupport(impl().instance, pd, i);
-
         if (!presentSupport)
             throw std::runtime_error("The selected physical device does not support presentation.");
-
         reqExtentions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    }
+#endif
+
+    // Provided by VK_VERSION_1_3
+    if (qSync2.synchronization2)
+    {
+        chain.add(VkPhysicalDeviceSynchronization2Features{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES,
+            .synchronization2 = VK_TRUE,
+        });
+        enabledFeatures.synchronization2 = true;
+    }
+
+    // Provided by VK_EXT_shader_atomic_float
+    if (qAtomicFloat)
+    {
+        reqExtentions.push_back(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME);
+
+        if (qAtomicFloat->shaderBufferFloat32AtomicAdd)
+        {
+            chain.add(VkPhysicalDeviceShaderAtomicFloatFeaturesEXT{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT,
+                .shaderBufferFloat32AtomicAdd = VK_TRUE,
+            });
+            enabledFeatures.shaderBufferFloat32AtomicAdd = true;
+        }
+    }
+
+    // Provided by VK_EXT_robustness2
+    if (qRobustness2)
+    {
+        reqExtentions.push_back(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
+
+        if (qRobustness2->nullDescriptor)
+        {
+            chain.add(VkPhysicalDeviceRobustness2FeaturesEXT{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
+                .nullDescriptor = VK_TRUE,
+            });
+            enabledFeatures.nullDescriptor = true;
+        }
+    }
+
+    // Provided by VK_KHR_pipeline_library + VK_EXT_graphics_pipeline_library
+    if (qGpl)
+    {
+        reqExtentions.push_back(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME);
+        reqExtentions.push_back(VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME);
+
+        if (qGpl->graphicsPipelineLibrary)
+        {
+            chain.add(VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT,
+                .graphicsPipelineLibrary = VK_TRUE,
+            });
+            enabledFeatures.graphicsPipelineLibrary = true;
+        }
+    }
+
+    // Provided by VK_VERSION_1_2
+    if (qFloat16Int8.shaderFloat16)
+    {
+        chain.add(VkPhysicalDeviceShaderFloat16Int8Features{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES,
+            .shaderFloat16 = VK_TRUE,
+        });
+        enabledFeatures.shaderFloat16 = true;
+    }
+
+    // Provided by VK_VERSION_1_1
+    if (q16BitStorage.storageBuffer16BitAccess)
+    {
+        chain.add(VkPhysicalDevice16BitStorageFeatures{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES,
+            .storageBuffer16BitAccess = VK_TRUE,
+        });
+        enabledFeatures.storageBuffer16BitAccess = true;
+    }
+
+    // Provided by VK_VERSION_1_2
+    if (qHostReset.hostQueryReset)
+    {
+        chain.add(VkPhysicalDeviceHostQueryResetFeatures{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES,
+            .hostQueryReset = VK_TRUE,
+        });
+        enabledFeatures.hostQueryReset = true;
+    }
+
+    if (!qMaintenance4.maintenance4)
+    {
+        throw std::runtime_error("The selected physical device does not support maintenance4 (required by LocalSizeId shaders).");
+    }
+    chain.add(VkPhysicalDeviceMaintenance4Features{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES,
+        .maintenance4 = VK_TRUE,
+    });
+
+    if (!qBDA.bufferDeviceAddress)
+    {
+        throw std::runtime_error("The selected physical device does not support bufferDeviceAddress, which is required by the runtime.");
+    }
+    chain.add(VkPhysicalDeviceBufferDeviceAddressFeatures{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
+        .bufferDeviceAddress = VK_TRUE,
+    });
+    enabledFeatures.bufferDeviceAddress = true;
+
+    if (qPipelineExecutableInfo && qPipelineExecutableInfo->pipelineExecutableInfo)
+    {
+        reqExtentions.push_back(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);
+        chain.add(VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR,
+            .pipelineExecutableInfo = VK_TRUE,
+        });
+        printf("[EVA] VK_KHR_pipeline_executable_properties enabled\n");
+    }
+    else if (settings.enablePipelineExecutableInfo)
+    {
+        printf("[EVA] VK_KHR_pipeline_executable_properties is not supported on this device. SASS dump disabled.\n");
+    }
+
+#ifdef EVA_ENABLE_PERFORMANCE_QUERY
+    // Provided by VK_KHR_performance_query
+    if (qPerfQuery)
+    {
+        reqExtentions.push_back(VK_KHR_PERFORMANCE_QUERY_EXTENSION_NAME);
+
+        if (qPerfQuery->performanceCounterQueryPools)
+        {
+            chain.add(VkPhysicalDevicePerformanceQueryFeaturesKHR{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PERFORMANCE_QUERY_FEATURES_KHR,
+                .performanceCounterQueryPools = VK_TRUE,
+            });
+            enabledFeatures.performanceCounterQueryPools = true;
+        }
     }
 #endif
 
 #ifdef EVA_ENABLE_RAYTRACING
     if (settings.enableRaytracing)
     {
-        reqExtentions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
-        reqExtentions.push_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+        if (!supportsExt(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME))
+        {
+            throw std::runtime_error("The selected physical device does not support VK_KHR_buffer_device_address required by raytracing.");
+        }
         reqExtentions.push_back(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
-        // From here, extensions required by the above extensions (extension hierarchy)
-        reqExtentions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
-        reqExtentions.push_back(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
-        reqExtentions.push_back(VK_KHR_SPIRV_1_4_EXTENSION_NAME);
+
+        // Provided by VK_KHR_acceleration_structure
+        if (qAccelStruct)
+        {
+            reqExtentions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+            reqExtentions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+            reqExtentions.push_back(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
+            reqExtentions.push_back(VK_KHR_SPIRV_1_4_EXTENSION_NAME);
+
+            if (qAccelStruct->accelerationStructure)
+            {
+                chain.add(VkPhysicalDeviceAccelerationStructureFeaturesKHR{
+                    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR,
+                    .accelerationStructure = VK_TRUE,
+                });
+                enabledFeatures.accelerationStructure = true;
+            }
+        }
+
+        // Provided by VK_KHR_ray_tracing_pipeline
+        if (qRtPipeline)
+        {
+            reqExtentions.push_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+
+            if (qRtPipeline->rayTracingPipeline)
+            {
+                chain.add(VkPhysicalDeviceRayTracingPipelineFeaturesKHR{
+                    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR,
+                    .rayTracingPipeline = VK_TRUE,
+                });
+                enabledFeatures.rayTracingPipeline = true;
+            }
+        }
     }
 #endif
 
@@ -1048,18 +1301,21 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     if (settings.enableCooperativeMatrix)
     {
 #ifdef VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME
-        reqExtentions.push_back(VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);
-        cooperative_matrix_supported = true;
+        if (supportsExt(VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME))
+        {
+            reqExtentions.push_back(VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);
+            cooperative_matrix_supported = true;
+        }
+        else
+        {
+            printf("[EVA] VK_KHR_cooperative_matrix is not supported on this device. Cooperative matrix disabled.\n");
+        }
 #else
         printf("[EVA] VK_KHR_cooperative_matrix is not available in this Vulkan SDK/headers. Cooperative matrix disabled.\n");
 #endif
 
         // Check if VK_NV_cooperative_matrix2 extension is available
-        auto deviceExtensions = arrayFrom(vkEnumerateDeviceExtensionProperties, pd, nullptr);
-        bool coopmat2_ext_available = std::any_of(deviceExtensions.begin(), deviceExtensions.end(),
-            [](const auto& props) {
-                return strcmp(props.extensionName, "VK_NV_cooperative_matrix2") == 0;
-            });
+        bool coopmat2_ext_available = supportsExt("VK_NV_cooperative_matrix2");
 
 #ifdef VK_NV_COOPERATIVE_MATRIX_2_SPEC_VERSION
         if (coopmat2_ext_available)
@@ -1109,23 +1365,12 @@ Device Runtime::createDevice(const DeviceSettings& settings)
 #endif
     }
 
-    // VK_KHR_pipeline_executable_properties for SASS dump
-    if (settings.enablePipelineExecutableInfo)
-    {
-        reqExtentions.push_back(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);
-        printf("[EVA] VK_KHR_pipeline_executable_properties enabled\n");
-    }
-
     // VK_NV_cuda_kernel_launch for CUDA PTX kernels in Vulkan command buffers
     bool cuda_kernel_launch_supported = false;
     if (settings.enableCudaKernelLaunch)
     {
         // Check if extension is available
-        auto deviceExtensions_cuda = arrayFrom(vkEnumerateDeviceExtensionProperties, pd, nullptr);
-        bool cuda_ext_available = std::any_of(deviceExtensions_cuda.begin(), deviceExtensions_cuda.end(),
-            [](const auto& props) {
-                return strcmp(props.extensionName, "VK_NV_cuda_kernel_launch") == 0;
-            });
+        bool cuda_ext_available = supportsExt("VK_NV_cuda_kernel_launch");
 
         if (cuda_ext_available)
         {
@@ -1163,11 +1408,6 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         }
     }
 
-    if (!deviceSupportsExtensions(pd, reqExtentions))
-    {
-        throw std::runtime_error("The selected physical device does not support the required extensions.");
-    }
-    
     std::vector<uint32_t> qfIndices[queue_max];
     for (uint32_t i = 0; i < qfProps.size(); i++) 
     {
@@ -1312,133 +1552,58 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
     }
 
-    PNextChain chain;
+    // VK_KHR_cooperative_matrix for Tensor Core GEMM
+    if (settings.enableCooperativeMatrix && cooperative_matrix_supported)
     {
-        chain.add(VkPhysicalDeviceFeatures2{
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-        });
-
-        // Required features
-        chain.add(VkPhysicalDeviceSynchronization2Features{
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES,
-            .synchronization2 = VK_TRUE,
-        });
-
-        chain.add(VkPhysicalDeviceMaintenance4Features{
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES,
-            .maintenance4 = VK_TRUE,
-        });
-
-        chain.add(VkPhysicalDeviceVulkan11Features{
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
-            .storageBuffer16BitAccess = VK_TRUE,
-        });
-        chain.add(VkPhysicalDeviceShaderFloat16Int8Features{
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES,
-            .shaderFloat16 = VK_TRUE,
-        });
-        chain.add(VkPhysicalDeviceBufferDeviceAddressFeatures{
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
-            .bufferDeviceAddress = VK_TRUE,
-        });
-
-        // chain.add(VkPhysicalDeviceRobustness2FeaturesEXT{
-        //     .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
-        //     .nullDescriptor = VK_TRUE,
-        // });
-
-        // chain.add(VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT{
-        //     .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT,
-        //     .graphicsPipelineLibrary = VK_TRUE,
-        // });
-        // Optional features
-        if (supportsAtomicFloat) {
-            chain.add(VkPhysicalDeviceShaderAtomicFloatFeaturesEXT{
-                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT,
-                .shaderBufferFloat32AtomicAdd = VK_TRUE,
-            });
-        }
-
-#ifdef EVA_ENABLE_RAYTRACING
-        if (settings.enableRaytracing)
-        {
-            chain.add(VkPhysicalDeviceBufferDeviceAddressFeatures{
-                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
-                .bufferDeviceAddress = VK_TRUE,
-            });
-            chain.add(VkPhysicalDeviceAccelerationStructureFeaturesKHR{
-                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR,
-                .accelerationStructure = VK_TRUE,
-            });
-            chain.add(VkPhysicalDeviceRayTracingPipelineFeaturesKHR{
-                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR,
-                .rayTracingPipeline = VK_TRUE,
-            });
-        }
-#endif
-
-        // VK_KHR_cooperative_matrix for Tensor Core GEMM
-        if (settings.enableCooperativeMatrix && cooperative_matrix_supported)
-        {
 #ifdef VK_KHR_cooperative_matrix
-            chain.add(VkPhysicalDeviceCooperativeMatrixFeaturesKHR{
-                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR,
-                .cooperativeMatrix = VK_TRUE,
-            });
+        chain.add(VkPhysicalDeviceCooperativeMatrixFeaturesKHR{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR,
+            .cooperativeMatrix = VK_TRUE,
+        });
 #else
-            printf("[EVA] VkPhysicalDeviceCooperativeMatrixFeaturesKHR is unavailable in current Vulkan headers. Cooperative matrix disabled.\n");
+        printf("[EVA] VkPhysicalDeviceCooperativeMatrixFeaturesKHR is unavailable in current Vulkan headers. Cooperative matrix disabled.\n");
 #endif
 
-            // VK_NV_cooperative_matrix2 for tensor operations (coopMatLoadTensorNV etc.)
-            // Enable all features if supported (detected in extension query phase)
-            if (coopmat2_supported)
-            {
+        // VK_NV_cooperative_matrix2 for tensor operations (coopMatLoadTensorNV etc.)
+        // Enable all features if supported (detected in extension query phase)
+        if (coopmat2_supported)
+        {
 #ifdef VK_NV_COOPERATIVE_MATRIX_2_SPEC_VERSION
-                chain.add(VkPhysicalDeviceCooperativeMatrix2FeaturesNV{
-                    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_2_FEATURES_NV,
-                    .cooperativeMatrixWorkgroupScope = VK_TRUE,
-                    .cooperativeMatrixFlexibleDimensions = VK_TRUE,
-                    .cooperativeMatrixReductions = VK_TRUE,
-                    .cooperativeMatrixConversions = VK_TRUE,
-                    .cooperativeMatrixPerElementOperations = VK_TRUE,
-                    .cooperativeMatrixTensorAddressing = VK_TRUE,
-                    .cooperativeMatrixBlockLoads = VK_TRUE,
-                });
-
-                // Set global flag for runtime query
-                eva::gCoopMat2Supported = true;
-#else
-                printf("[EVA] coopmat2 features are unavailable in current Vulkan headers. coopmat2 disabled.\n");
-#endif
-            }
-        }
-
-        // VK_KHR_pipeline_executable_properties for SASS dump
-        if (settings.enablePipelineExecutableInfo)
-        {
-            chain.add(VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR{
-                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR,
-                .pipelineExecutableInfo = VK_TRUE,
+            chain.add(VkPhysicalDeviceCooperativeMatrix2FeaturesNV{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_2_FEATURES_NV,
+                .cooperativeMatrixWorkgroupScope = VK_TRUE,
+                .cooperativeMatrixFlexibleDimensions = VK_TRUE,
+                .cooperativeMatrixReductions = VK_TRUE,
+                .cooperativeMatrixConversions = VK_TRUE,
+                .cooperativeMatrixPerElementOperations = VK_TRUE,
+                .cooperativeMatrixTensorAddressing = VK_TRUE,
+                .cooperativeMatrixBlockLoads = VK_TRUE,
             });
-        }
 
-        // VK_NV_cuda_kernel_launch for CUDA PTX kernels
-        if (cuda_kernel_launch_supported)
-        {
-            // VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUDA_KERNEL_LAUNCH_FEATURES_NV = 1000307003
-            struct CudaKernelLaunchFeatures {
-                VkStructureType sType;
-                void* pNext;
-                VkBool32 cudaKernelLaunchFeatures;
-            };
-            CudaKernelLaunchFeatures cuda_feat{};
-            cuda_feat.sType = (VkStructureType)1000307003;
-            cuda_feat.pNext = nullptr;
-            cuda_feat.cudaKernelLaunchFeatures = VK_TRUE;
-            chain.add(cuda_feat);
-
-            eva::gCudaKernelLaunchSupported = true;
+            // Set global flag for runtime query
+            eva::gCoopMat2Supported = true;
+#else
+            printf("[EVA] coopmat2 features are unavailable in current Vulkan headers. coopmat2 disabled.\n");
+#endif
         }
+    }
+
+    // VK_NV_cuda_kernel_launch for CUDA PTX kernels
+    if (cuda_kernel_launch_supported)
+    {
+        // VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUDA_KERNEL_LAUNCH_FEATURES_NV = 1000307003
+        struct CudaKernelLaunchFeatures {
+            VkStructureType sType;
+            void* pNext;
+            VkBool32 cudaKernelLaunchFeatures;
+        };
+        CudaKernelLaunchFeatures cuda_feat{};
+        cuda_feat.sType = (VkStructureType)1000307003;
+        cuda_feat.pNext = nullptr;
+        cuda_feat.cudaKernelLaunchFeatures = VK_TRUE;
+        chain.add(cuda_feat);
+
+        eva::gCudaKernelLaunchSupported = true;
     }
 
     VkDeviceCreateInfo deviceCreateInfo{
@@ -1500,7 +1665,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         caps.subgroupOperations = subgroupProps.supportedOperations;
 
         // Optional features
-        caps.supportsAtomicFloat = supportsAtomicFloat;
+        caps.supportsAtomicFloat = enabledFeatures.shaderBufferFloat32AtomicAdd;
         caps.supportsAtomicFloatShared = false;  // TODO: query if needed
 
         // Device local memory
@@ -1526,10 +1691,20 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         qfIndex[queue_transfer],
         std::move(queues)
     );
+    pImpl->enabledExtensions = std::move(reqExtentions);
+    pImpl->features = enabledFeatures;
+
+    if (!pImpl->features.synchronization2)
+    {
+        throw std::runtime_error("The selected physical device does not support synchronization2 feature, which is required by the runtime.");
+    }
 
 #ifdef EVA_ENABLE_RAYTRACING
     if (settings.enableRaytracing)
     {
+        EVA_ASSERT(pImpl->features.rayTracingPipeline);
+        EVA_ASSERT(pImpl->features.accelerationStructure);
+
         vkGetBufferDeviceAddressKHR_ = (PFN_vkGetBufferDeviceAddressKHR)vkGetDeviceProcAddr(vkDevice, "vkGetBufferDeviceAddressKHR");
         vkCreateAccelerationStructureKHR_ = (PFN_vkCreateAccelerationStructureKHR)vkGetDeviceProcAddr(vkDevice, "vkCreateAccelerationStructureKHR");
         vkDestroyAccelerationStructureKHR_ = (PFN_vkDestroyAccelerationStructureKHR)vkGetDeviceProcAddr(vkDevice, "vkDestroyAccelerationStructureKHR");
@@ -1576,7 +1751,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     }
 
     // Load pipeline executable properties function pointers
-    if (settings.enablePipelineExecutableInfo)
+    if (qPipelineExecutableInfo && qPipelineExecutableInfo->pipelineExecutableInfo)
     {
         vkGetPipelineExecutablePropertiesKHR_ = (PFN_vkGetPipelineExecutablePropertiesKHR)
             vkGetDeviceProcAddr(vkDevice, "vkGetPipelineExecutablePropertiesKHR");
@@ -1590,6 +1765,21 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         else
             printf("[EVA] ERROR: Failed to load pipeline executable properties functions!\n");
     }
+
+#ifdef EVA_ENABLE_PERFORMANCE_QUERY
+    // VK_KHR_performance_query function pointers
+    if (enabledFeatures.performanceCounterQueryPools)
+    {
+        vkEnumeratePerformanceQueryCountersKHR_ = (PFN_vkEnumeratePhysicalDeviceQueueFamilyPerformanceQueryCountersKHR)
+            vkGetInstanceProcAddr(impl().instance, "vkEnumeratePhysicalDeviceQueueFamilyPerformanceQueryCountersKHR");
+        vkGetPerformanceQueryPassesKHR_ = (PFN_vkGetPhysicalDeviceQueueFamilyPerformanceQueryPassesKHR)
+            vkGetInstanceProcAddr(impl().instance, "vkGetPhysicalDeviceQueueFamilyPerformanceQueryPassesKHR");
+        vkAcquireProfilingLockKHR_ = (PFN_vkAcquireProfilingLockKHR)
+            vkGetDeviceProcAddr(vkDevice, "vkAcquireProfilingLockKHR");
+        vkReleaseProfilingLockKHR_ = (PFN_vkReleaseProfilingLockKHR)
+            vkGetDeviceProcAddr(vkDevice, "vkReleaseProfilingLockKHR");
+    }
+#endif
 
     return impl().devices.emplace_back(new Device::Impl*(pImpl));
 }
@@ -2088,7 +2278,10 @@ CommandBuffer CommandBuffer::bindDescSets(
 {
     std::vector<VkDescriptorSet> vkDescSets(descSets.size());
     for (uint32_t i = 0; i < descSets.size(); ++i)
+    {
+        EVA_ASSERT(descSets[i] || impl().device.impl().features.graphicsPipelineLibrary);
         vkDescSets[i] = descSets[i] ? descSets[i].impl().vkDescSet : VK_NULL_HANDLE;
+    }
 
     vkCmdBindDescriptorSets(
         impl().vkCmdBuffer, (VkPipelineBindPoint)(uint32_t)bindPoint,
@@ -2104,7 +2297,10 @@ CommandBuffer CommandBuffer::bindDescSets(
 {
     std::vector<VkDescriptorSet> vkDescSets(descSets.size());
     for (uint32_t i = 0; i < descSets.size(); ++i)
+    {
+        EVA_ASSERT(descSets[i] || impl().device.impl().features.graphicsPipelineLibrary);
         vkDescSets[i] = descSets[i] ? descSets[i].impl().vkDescSet : VK_NULL_HANDLE;
+    }
 
     auto index = impl().boundPipeline.index();
     VkPipelineBindPoint bindPoint;
@@ -2653,14 +2849,13 @@ CommandBuffer CommandBuffer::dispatch(uint32_t groupCountX, uint32_t groupCountY
     return *this;
 }
 
-
 CommandBuffer CommandBuffer::resetQueryPool(QueryPool pool, uint32_t firstQuery, uint32_t queryCount)
 {
-    if (queryCount == 0) queryCount = pool.queryCount() - firstQuery;
+    if (queryCount == 0)
+        queryCount = pool.queryCount() - firstQuery;
     vkCmdResetQueryPool(impl().vkCmdBuffer, pool.impl().vkQueryPool, firstQuery, queryCount);
     return *this;
 }
-
 
 CommandBuffer CommandBuffer::writeTimestamp(PIPELINE_STAGE stage, QueryPool pool, uint32_t query)
 {
@@ -2672,6 +2867,17 @@ CommandBuffer CommandBuffer::writeTimestamp(PIPELINE_STAGE stage, QueryPool pool
     return *this;
 }
 
+CommandBuffer CommandBuffer::beginQuery(QueryPool pool, uint32_t query)
+{
+    vkCmdBeginQuery(impl().vkCmdBuffer, pool.impl().vkQueryPool, query, 0);
+    return *this;
+}
+
+CommandBuffer CommandBuffer::endQuery(QueryPool pool, uint32_t query)
+{
+    vkCmdEndQuery(impl().vkCmdBuffer, pool.impl().vkQueryPool, query);
+    return *this;
+}
 
 #ifdef EVA_ENABLE_RAYTRACING
 CommandBuffer CommandBuffer::traceRays(
@@ -3761,79 +3967,10 @@ DescriptorPool Device::createDescriptorPool(const DescriptorPoolCreateInfo& info
     });
 
     auto pImpl = new DescriptorPool::Impl(
-        impl().vkDevice,
-        vkHandle);
+        vkHandle,
+        *this);
 
     return *impl().descPools.insert(new DescriptorPool::Impl*(pImpl)).first;
-}
-
-
-QueryPool Device::createQueryPool(uint32_t queryCount)
-{
-    VkQueryPoolCreateInfo createInfo = {
-        .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
-        .queryType = VK_QUERY_TYPE_TIMESTAMP,
-        .queryCount = queryCount,
-    };
-
-    VkQueryPool vkQueryPool;
-    ASSERT_SUCCESS(vkCreateQueryPool(impl().vkDevice, &createInfo, nullptr, &vkQueryPool));
-
-    // Get timestamp period from physical device
-    VkPhysicalDeviceProperties props;
-    vkGetPhysicalDeviceProperties(impl().vkPhysicalDevice, &props);
-
-    auto pImpl = new QueryPool::Impl(
-        impl().vkDevice,
-        vkQueryPool,
-        queryCount,
-        props.limits.timestampPeriod);
-
-    return *impl().queryPools.insert(new QueryPool::Impl*(pImpl)).first;
-}
-
-
-bool Device::supportsTimestampQueries() const
-{
-    VkPhysicalDeviceProperties props;
-    vkGetPhysicalDeviceProperties(impl().vkPhysicalDevice, &props);
-    return props.limits.timestampComputeAndGraphics == VK_TRUE;
-}
-
-
-std::vector<uint64_t> QueryPool::getResults(uint32_t firstQuery, uint32_t queryCount)
-{
-    if (queryCount == 0) queryCount = impl().queryCount - firstQuery;
-
-    std::vector<uint64_t> results(queryCount);
-    vkGetQueryPoolResults(
-        impl().vkDevice,
-        impl().vkQueryPool,
-        firstQuery,
-        queryCount,
-        queryCount * sizeof(uint64_t),
-        results.data(),
-        sizeof(uint64_t),
-        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT
-    );
-    return results;
-}
-
-
-double QueryPool::getElapsedMs(uint32_t startQuery, uint32_t endQuery)
-{
-    auto results = getResults(startQuery, endQuery - startQuery + 1);
-    if (results.size() < 2) return 0.0;
-
-    uint64_t elapsed = results.back() - results.front();
-    // timestampPeriod is in nanoseconds, convert to milliseconds
-    return static_cast<double>(elapsed) * impl().timestampPeriod / 1e6;
-}
-
-
-uint32_t QueryPool::queryCount() const
-{
-    return impl().queryCount;
 }
 
 
@@ -3843,7 +3980,7 @@ std::vector<DescriptorSet> DescriptorPool::operator()(std::vector<DescriptorSetL
     for (uint32_t i = 0; i < setLayouts.size(); ++i) 
         vkSetLayouts[i] = setLayouts[i].impl().vkSetLayout;
 
-    std::vector<VkDescriptorSet> vkDescSets = allocate<VkDescriptorSet>(impl().vkDevice, {
+    std::vector<VkDescriptorSet> vkDescSets = allocate<VkDescriptorSet>(impl().device.impl().vkDevice, {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .descriptorPool = impl().vkDescPool,
         .descriptorSetCount = (uint32_t)vkSetLayouts.size(),
@@ -3855,9 +3992,9 @@ std::vector<DescriptorSet> DescriptorPool::operator()(std::vector<DescriptorSetL
     for (uint32_t i = 0; i < setLayouts.size(); ++i)
     {
         auto pImpl = new DescriptorSet::Impl(
-            impl().vkDevice,
             vkDescSets[i],
-            setLayouts[i]);
+            setLayouts[i],
+            impl().device);
 
         descSets.push_back(impl().descSets.emplace_back(new DescriptorSet::Impl*(pImpl)));
     }
@@ -3954,6 +4091,9 @@ DescriptorSet DescriptorSet::write(
             {
                 // bufferInfos.push_back(std::get<BufferDescriptor>(descriptors[consumedDescriptors + i]).descInfo());
                 auto& desc = std::get<BufferDescriptor>(descriptors[consumedDescriptors + i]);
+
+                EVA_ASSERT(desc.buffer || impl().device.impl().features.nullDescriptor);
+
                 bufferInfos.emplace_back(
                     desc.buffer ? desc.buffer.impl().vkBuffer : VK_NULL_HANDLE,
                     desc.offset,
@@ -3974,12 +4114,22 @@ DescriptorSet DescriptorSet::write(
             {
                 // imageInfos.push_back(std::get<ImageDescriptor>(descriptors[consumedDescriptors + i]).descInfo());
                 auto& desc = std::get<ImageDescriptor>(descriptors[consumedDescriptors + i]);
-                imageInfos.push_back(VkDescriptorImageInfo{
-                    .sampler = desc.sampler ? desc.sampler->impl().vkSampler : VK_NULL_HANDLE,
-                    .imageView = desc.imageView ? desc.imageView->impl().vkImageView : VK_NULL_HANDLE,
-                    .imageLayout = (VkImageLayout)(uint32_t) (desc.imageLayout != IMAGE_LAYOUT::MAX_ENUM
+
+                if (descriptorType == DESCRIPTOR_TYPE::COMBINED_IMAGE_SAMPLER)
+                {
+                    EVA_ASSERT((desc.imageView || impl().device.impl().features.nullDescriptor) && desc.sampler);
+                }
+                else
+                {
+                    EVA_ASSERT(desc.imageView || impl().device.impl().features.nullDescriptor);
+                }
+
+                imageInfos.emplace_back(
+                    desc.sampler ? desc.sampler->impl().vkSampler : VK_NULL_HANDLE,
+                    desc.imageView ? desc.imageView->impl().vkImageView : VK_NULL_HANDLE,
+                    (VkImageLayout)(uint32_t) (desc.imageLayout != IMAGE_LAYOUT::MAX_ENUM
                                                 ? desc.imageLayout : defaultLayout)
-                }); // TODO: Clang 호환성 - emplace_back → push_back + designated initializer
+                ); // TODO: Clang 호환성 - emplace_back → push_back + designated initializer
             }
         }
         
@@ -3996,6 +4146,8 @@ DescriptorSet DescriptorSet::write(
             for (uint32_t i = 0; i < consecutiveDescCount; ++i)
             {
                 auto& as = std::get<AccelerationStructure>(descriptors[consumedDescriptors + i]);
+
+                EVA_ASSERT(as.impl().vkAccelStruct || impl().device.impl().features.nullDescriptor);
                 asArray.push_back(as ? as.impl().vkAccelStruct : VK_NULL_HANDLE);
             }
         }
@@ -4012,7 +4164,7 @@ DescriptorSet DescriptorSet::write(
     }
     EVA_ASSERT(consumedDescriptors == descriptors.size()); // If given shader data has not been fully consumed, it is considered as an error.
     
-    vkUpdateDescriptorSets(impl().vkDevice, (uint32_t)writes.size(), writes.data(), 0, nullptr);
+    vkUpdateDescriptorSets(impl().device.impl().vkDevice, (uint32_t)writes.size(), writes.data(), 0, nullptr);
     return *this;
 }
 
@@ -4023,6 +4175,189 @@ DescriptorSet DescriptorSet::operator=(std::vector<DescriptorSet>&& data)
     return *this;
 }
 
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// QueryPool
+/////////////////////////////////////////////////////////////////////////////////////////
+bool Device::supportsTimestampQueries() const
+{
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(impl().vkPhysicalDevice, &props);
+    return props.limits.timestampComputeAndGraphics == VK_TRUE;
+}
+
+QueryPool Device::createTimestampQueryPool(uint32_t queryCount)
+{
+    auto vkHandle = create<VkQueryPool>(impl().vkDevice, {
+        .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+        .queryType = VK_QUERY_TYPE_TIMESTAMP,
+        .queryCount = queryCount,
+    });
+
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(impl().vkPhysicalDevice, &props);
+
+    auto pImpl = new QueryPool::Impl(
+        *this,
+        vkHandle,
+        queryCount,
+        props.limits.timestampPeriod);
+
+    return *impl().queryPools.insert(new QueryPool::Impl*(pImpl)).first;
+}
+
+QueryPool Device::createQueryPool(uint32_t queryCount)
+{
+    return createTimestampQueryPool(queryCount);
+}
+
+uint32_t QueryPool::queryCount() const
+{
+    return impl().queryCount;
+}
+
+void QueryPool::reset(uint32_t firstQuery, uint32_t queryCount)
+{
+    EVA_ASSERT(impl().device.impl().features.hostQueryReset);
+
+    if (queryCount == 0)
+        queryCount = impl().queryCount - firstQuery;
+    vkResetQueryPool(impl().device.impl().vkDevice, impl().vkQueryPool, firstQuery, queryCount);
+}
+
+std::vector<uint64_t> QueryPool::getResults(uint32_t firstQuery, uint32_t queryCount)
+{
+    if (queryCount == 0)
+        queryCount = impl().queryCount - firstQuery;
+
+    auto stride = (impl().type == VK_QUERY_TYPE_PERFORMANCE_QUERY_KHR) ?
+        impl().performanceCounterCount * sizeof(uint64_t) : sizeof(uint64_t);
+    VkQueryResultFlags addFlags = (impl().type == VK_QUERY_TYPE_TIMESTAMP) ? VK_QUERY_RESULT_64_BIT : 0;
+
+    std::vector<uint64_t> results(queryCount * stride / sizeof(uint64_t));
+    vkGetQueryPoolResults(
+        impl().device.impl().vkDevice,
+        impl().vkQueryPool,
+        firstQuery,
+        queryCount,
+        queryCount * stride,
+        results.data(),
+        stride,
+        VK_QUERY_RESULT_WAIT_BIT | addFlags
+    );
+    return results;
+}
+
+double QueryPool::getElapsedMs(uint32_t startQuery, uint32_t endQuery)
+{
+    EVA_ASSERT(impl().type == VK_QUERY_TYPE_TIMESTAMP);
+    auto results = getResults(startQuery, endQuery - startQuery + 1);
+    if (results.size() < 2) return 0.0;
+
+    uint64_t elapsed = results.back() - results.front();
+    return static_cast<double>(elapsed) * impl().timestampPeriod / 1e6;
+}
+
+#ifdef EVA_ENABLE_PERFORMANCE_QUERY
+bool Device::supportsPerformanceQueries() const
+{
+    return impl().features.performanceCounterQueryPools;
+}
+
+std::vector<PerformanceCounter> Device::enumeratePerformanceCounters(QueueType type) const
+{
+    EVA_ASSERT(impl().features.performanceCounterQueryPools);
+    uint32_t qfIdx = impl().qfIndex[type];
+    EVA_ASSERT(qfIdx != uint32_t(-1));
+
+    uint32_t count = 0;
+    vkEnumeratePerformanceQueryCountersKHR_(impl().vkPhysicalDevice, qfIdx, &count, nullptr, nullptr);
+
+    std::vector<VkPerformanceCounterKHR> vkCounters(count, {
+        .sType = VK_STRUCTURE_TYPE_PERFORMANCE_COUNTER_KHR,
+    });
+    std::vector<VkPerformanceCounterDescriptionKHR> vkDescs(count, {
+        .sType = VK_STRUCTURE_TYPE_PERFORMANCE_COUNTER_DESCRIPTION_KHR,
+    });
+    vkEnumeratePerformanceQueryCountersKHR_(impl().vkPhysicalDevice, qfIdx, &count, vkCounters.data(), vkDescs.data());
+
+    std::vector<PerformanceCounter> result(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        result[i].name        = vkDescs[i].name;
+        result[i].category    = vkDescs[i].category;
+        result[i].description = vkDescs[i].description;
+        result[i].unit        = (PERFORMANCE_COUNTER_UNIT)vkCounters[i].unit;
+        result[i].storage     = (PERFORMANCE_COUNTER_STORAGE)vkCounters[i].storage;
+        result[i].scope       = (PERFORMANCE_COUNTER_SCOPE)vkCounters[i].scope;
+        result[i].flags       = (PERFORMANCE_COUNTER_DESCRIPTION)vkDescs[i].flags;
+    }
+    return result;
+}
+
+uint32_t Device::getPerformanceQueryPasses(QueueType type, const std::vector<uint32_t>& counterIndices) const
+{
+    EVA_ASSERT(impl().features.performanceCounterQueryPools);
+    uint32_t qfIdx = impl().qfIndex[type];
+
+    VkQueryPoolPerformanceCreateInfoKHR perfCreateInfo = {
+        .sType = VK_STRUCTURE_TYPE_QUERY_POOL_PERFORMANCE_CREATE_INFO_KHR,
+        .queueFamilyIndex = qfIdx,
+        .counterIndexCount = (uint32_t)counterIndices.size(),
+        .pCounterIndices = counterIndices.data(),
+    };
+
+    uint32_t numPasses = 0;
+    vkGetPerformanceQueryPassesKHR_(impl().vkPhysicalDevice, &perfCreateInfo, &numPasses);
+    return numPasses;
+}
+
+QueryPool Device::createPerformanceQueryPool(
+    QueueType type,
+    const std::vector<uint32_t>& counterIndices,
+    uint32_t queryCount)
+{
+    EVA_ASSERT(impl().features.performanceCounterQueryPools);
+    uint32_t qfIdx = impl().qfIndex[type];
+
+    VkQueryPoolPerformanceCreateInfoKHR perfCreateInfo = {
+        .sType = VK_STRUCTURE_TYPE_QUERY_POOL_PERFORMANCE_CREATE_INFO_KHR,
+        .queueFamilyIndex = qfIdx,
+        .counterIndexCount = (uint32_t)counterIndices.size(),
+        .pCounterIndices = counterIndices.data(),
+    };
+
+    auto vkHandle = create<VkQueryPool>(impl().vkDevice, {
+        .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+        .pNext = &perfCreateInfo,
+        .queryType = VK_QUERY_TYPE_PERFORMANCE_QUERY_KHR,
+        .queryCount = queryCount,
+    });
+
+    auto pImpl = new QueryPool::Impl(
+        *this,
+        vkHandle,
+        queryCount,
+        (uint32_t)counterIndices.size());
+
+    return *impl().queryPools.insert(new QueryPool::Impl*(pImpl)).first;
+}
+
+void Device::acquireProfilingLock(uint64_t timeout)
+{
+    EVA_ASSERT(impl().features.performanceCounterQueryPools);
+    VkAcquireProfilingLockInfoKHR lockInfo = {
+        .sType = VK_STRUCTURE_TYPE_ACQUIRE_PROFILING_LOCK_INFO_KHR,
+        .timeout = timeout,
+    };
+    ASSERT_SUCCESS(vkAcquireProfilingLockKHR_(impl().vkDevice, &lockInfo));
+}
+
+void Device::releaseProfilingLock()
+{
+    EVA_ASSERT(impl().features.performanceCounterQueryPools);
+    vkReleaseProfilingLockKHR_(impl().vkDevice);
+}
+#endif
 
 
 /////////////////////////////////////////////////////////////////////////////////////////

@@ -1,0 +1,35 @@
+#version 450
+
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+
+layout(local_size_x = 32, local_size_y = 32) in;
+
+// A: M x K float16_t
+// B: K x N float16_t
+// C: M x N float32 output (FP32 accumulation)
+layout(set = 0, binding = 0) buffer OutBuffer { float C[]; };
+layout(set = 0, binding = 1) buffer InBuffer  { float16_t A[]; };
+layout(set = 0, binding = 2) buffer Weight    { float16_t B[]; };
+
+layout(push_constant) uniform PushConstants {
+    int M;
+    int N;
+    int K;
+};
+
+void main()
+{
+    int n = int(gl_GlobalInvocationID.x);
+    int m = int(gl_GlobalInvocationID.y);
+
+    if (m >= M || n >= N)
+        return;
+
+    float sum = 0.0;
+
+    for (int j = 0; j < K; ++j) {
+        sum += float(A[m * K + j]) * float(B[j * N + n]);
+    }
+
+    C[m * N + n] = sum;
+}

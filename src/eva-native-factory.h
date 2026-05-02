@@ -136,6 +136,7 @@ VK_HANDLE_FACTORY_INCLUDE(VkSampler, vkCreateSampler);
 VK_HANDLE_FACTORY_INCLUDE(VkDescriptorSetLayout, vkCreateDescriptorSetLayout);
 VK_HANDLE_FACTORY_INCLUDE(VkPipelineLayout, vkCreatePipelineLayout);
 VK_HANDLE_FACTORY_INCLUDE(VkDescriptorPool, vkCreateDescriptorPool);
+VK_HANDLE_FACTORY_INCLUDE(VkQueryPool, vkCreateQueryPool);
 VK_HANDLE_FACTORY_INCLUDE(VkSwapchainKHR, vkCreateSwapchainKHR);
 
 
