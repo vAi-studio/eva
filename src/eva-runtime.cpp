@@ -43,30 +43,54 @@ namespace eva {
     bool isCudaKernelLaunchSupported() { return gCudaKernelLaunchSupported; }
 }
 
+#ifdef EVA_ENABLE_NSIGHT_DEBUG_LABELS
+static bool supportsInstanceExtension(const char* name)
+{
+    uint32_t count = 0;
+    if (vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr) != VK_SUCCESS)
+        return false;
+
+    std::vector<VkExtensionProperties> extensions(count);
+    if (count > 0 &&
+        vkEnumerateInstanceExtensionProperties(nullptr, &count, extensions.data()) != VK_SUCCESS)
+    {
+        return false;
+    }
+
+    return std::any_of(extensions.begin(), extensions.end(), [&](const auto& extension) {
+        return strcmp(extension.extensionName, name) == 0;
+    });
+}
+#endif
+
 std::vector<const char*> getRequiredInstanceExtensions()
 {
+    std::vector<const char*> extensions;
 #ifdef EVA_ENABLE_WINDOW
-    return { 
-        "VK_KHR_surface" 
+    extensions.push_back("VK_KHR_surface");
 
     #ifdef EVA_PLATFORM_WINDOWS
-        , "VK_KHR_win32_surface"
+    extensions.push_back("VK_KHR_win32_surface");
     #elif defined(EVA_PLATFORM_ANDROID)
-        , "VK_KHR_android_surface"
+    extensions.push_back("VK_KHR_android_surface");
     #elif defined(EVA_PLATFORM_XLIB)
-        , "VK_KHR_xlib_surface"
+    extensions.push_back("VK_KHR_xlib_surface");
     #elif defined(EVA_PLATFORM_WAYLAND)
-        , "VK_KHR_wayland_surface"
+    extensions.push_back("VK_KHR_wayland_surface");
     #elif defined(EVA_PLATFORM_MACOS) || defined(EVA_PLATFORM_IOS)
-        , "VK_EXT_metal_surface"
-        , "VK_KHR_portability_enumeration"
+    extensions.push_back("VK_EXT_metal_surface");
+    extensions.push_back("VK_KHR_portability_enumeration");
     #endif
-
-    };
-    
-#else
-    return {};
 #endif
+
+#ifdef EVA_ENABLE_NSIGHT_DEBUG_LABELS
+    if (supportsInstanceExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME))
+        extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    else
+        printf("[EVA] VK_EXT_debug_utils unavailable; Nsight debug labels disabled.\n");
+#endif
+
+    return extensions;
 }
 
 

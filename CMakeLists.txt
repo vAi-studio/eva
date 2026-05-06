@@ -15,6 +15,7 @@ option(EVA_BUILD_SAMPLES "Build EVA sample projects" OFF)
 option(EVA_ENABLE_WINDOW "Enable window support" OFF)
 option(EVA_ENABLE_RAYTRACING "Enable raytracing support" OFF)
 option(EVA_ENABLE_PERFORMANCE_QUERY "Enable performance query support" OFF)
+option(EVA_ENABLE_NSIGHT_DEBUG_LABELS "Enable optional Vulkan debug-utils labels for profiling" OFF)
 
 # Find Vulkan
 find_package(Vulkan REQUIRED)
@@ -108,6 +109,10 @@ endif()
 # Performance query support
 if(EVA_ENABLE_PERFORMANCE_QUERY)
     target_compile_definitions(eva PUBLIC EVA_ENABLE_PERFORMANCE_QUERY)
+endif()
+
+if(EVA_ENABLE_NSIGHT_DEBUG_LABELS)
+    target_compile_definitions(eva PUBLIC EVA_ENABLE_NSIGHT_DEBUG_LABELS)
 endif()
 
 # Raytracing support
