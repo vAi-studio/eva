@@ -641,6 +641,7 @@ public:
     DescriptorSetLayout descSetLayout(uint32_t setId=0) const;
     uint32_t pushConstantSize() const;
     std::string executableStatisticsText(const char* label = nullptr) const;
+    std::string executableInternalRepresentationsText(const char* label = nullptr, size_t maxRepresentationBytes = 256 * 1024) const;
 };
 
 

@@ -3377,6 +3377,123 @@ std::string ComputePipeline::executableStatisticsText(const char* label) const
     return out.str();
 }
 
+std::string ComputePipeline::executableInternalRepresentationsText(const char* label, size_t maxRepresentationBytes) const
+{
+    if (!vkGetPipelineExecutablePropertiesKHR_ || !vkGetPipelineExecutableInternalRepresentationsKHR_)
+        return {};
+
+    VkPipelineInfoKHR pipelineInfo{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INFO_KHR,
+        .pipeline = impl().vkPipeline,
+    };
+
+    uint32_t executableCount = 0;
+    if (vkGetPipelineExecutablePropertiesKHR_(impl().vkDevice, &pipelineInfo, &executableCount, nullptr) != VK_SUCCESS ||
+        executableCount == 0)
+    {
+        return {};
+    }
+
+    std::vector<VkPipelineExecutablePropertiesKHR> executableProps(
+        executableCount,
+        VkPipelineExecutablePropertiesKHR{.sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR});
+    if (vkGetPipelineExecutablePropertiesKHR_(impl().vkDevice, &pipelineInfo, &executableCount, executableProps.data()) != VK_SUCCESS)
+        return {};
+
+    std::ostringstream out;
+    for (uint32_t executableIndex = 0; executableIndex < executableCount; ++executableIndex)
+    {
+        VkPipelineExecutableInfoKHR executableInfo{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR,
+            .pipeline = impl().vkPipeline,
+            .executableIndex = executableIndex,
+        };
+
+        uint32_t representationCount = 0;
+        VkResult queryResult = vkGetPipelineExecutableInternalRepresentationsKHR_(impl().vkDevice, &executableInfo, &representationCount, nullptr);
+        if (queryResult != VK_SUCCESS || representationCount == 0)
+        {
+            out << "VAI_PIPELINE_IR_UNAVAILABLE";
+            if (label && *label)
+                out << " label=" << label;
+            out << " executable=" << executableIndex
+                << " executable_name=\"" << executableProps[executableIndex].name << "\""
+                << " reason=\"" << (queryResult == VK_SUCCESS ? "no_internal_representations" : "query_failed") << "\"\n";
+            continue;
+        }
+
+        std::vector<VkPipelineExecutableInternalRepresentationKHR> representations(
+            representationCount,
+            VkPipelineExecutableInternalRepresentationKHR{.sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INTERNAL_REPRESENTATION_KHR});
+        if (vkGetPipelineExecutableInternalRepresentationsKHR_(impl().vkDevice, &executableInfo, &representationCount, representations.data()) != VK_SUCCESS)
+        {
+            out << "VAI_PIPELINE_IR_UNAVAILABLE";
+            if (label && *label)
+                out << " label=" << label;
+            out << " executable=" << executableIndex
+                << " executable_name=\"" << executableProps[executableIndex].name << "\""
+                << " reason=\"metadata_fetch_failed\"\n";
+            continue;
+        }
+
+        std::vector<std::vector<uint8_t>> blobs(representationCount);
+        for (uint32_t representationIndex = 0; representationIndex < representationCount; ++representationIndex)
+        {
+            blobs[representationIndex].resize(representations[representationIndex].dataSize);
+            representations[representationIndex].pData = blobs[representationIndex].empty()
+                ? nullptr
+                : blobs[representationIndex].data();
+        }
+
+        if (vkGetPipelineExecutableInternalRepresentationsKHR_(impl().vkDevice, &executableInfo, &representationCount, representations.data()) != VK_SUCCESS)
+        {
+            out << "VAI_PIPELINE_IR_UNAVAILABLE";
+            if (label && *label)
+                out << " label=" << label;
+            out << " executable=" << executableIndex
+                << " executable_name=\"" << executableProps[executableIndex].name << "\""
+                << " reason=\"payload_fetch_failed\"\n";
+            continue;
+        }
+
+        for (uint32_t representationIndex = 0; representationIndex < representationCount; ++representationIndex)
+        {
+            const auto& rep = representations[representationIndex];
+            out << "VAI_PIPELINE_IR";
+            if (label && *label)
+                out << " label=" << label;
+            out << " executable=" << executableIndex
+                << " representation=" << representationIndex
+                << " executable_name=\"" << executableProps[executableIndex].name << "\""
+                << " name=\"" << rep.name << "\""
+                << " description=\"" << rep.description << "\""
+                << " is_text=" << (rep.isText ? "true" : "false")
+                << " data_size=" << rep.dataSize
+                << "\n";
+
+            const size_t bytesToPrint = std::min<size_t>(rep.dataSize, maxRepresentationBytes);
+            if (rep.isText)
+            {
+                out << "BEGIN_VAI_PIPELINE_IR_TEXT\n";
+                if (rep.pData && bytesToPrint > 0)
+                    out.write(static_cast<const char*>(rep.pData), static_cast<std::streamsize>(bytesToPrint));
+                if (rep.dataSize > maxRepresentationBytes)
+                    out << "\n<TRUNCATED " << (rep.dataSize - maxRepresentationBytes) << " bytes>\n";
+                out << "\nEND_VAI_PIPELINE_IR_TEXT\n";
+            }
+            else
+            {
+                out << "  binary_data_omitted=true";
+                if (rep.dataSize > maxRepresentationBytes)
+                    out << " truncated_at=" << maxRepresentationBytes;
+                out << "\n";
+            }
+        }
+    }
+
+    return out.str();
+}
+
 
 /////////////////////////////////////////////////////////////////////////////////////////
 // RaytracingPipeline
