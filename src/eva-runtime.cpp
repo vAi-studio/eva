@@ -10,6 +10,7 @@
 #include <set>
 #include <algorithm>// std::all_of, std::any_of
 #include <fstream>
+#include <sstream>
 #include "eva-native-factory.h"
 #include "eva-runtime.h"
 
@@ -3297,6 +3298,83 @@ DescriptorSetLayout ComputePipeline::descSetLayout(uint32_t setId) const
 uint32_t ComputePipeline::pushConstantSize() const
 {
     return impl().layout.pushConstantSize();
+}
+
+std::string ComputePipeline::executableStatisticsText(const char* label) const
+{
+    if (!vkGetPipelineExecutablePropertiesKHR_ || !vkGetPipelineExecutableStatisticsKHR_)
+        return {};
+
+    VkPipelineInfoKHR pipelineInfo{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INFO_KHR,
+        .pipeline = impl().vkPipeline,
+    };
+
+    uint32_t executableCount = 0;
+    if (vkGetPipelineExecutablePropertiesKHR_(impl().vkDevice, &pipelineInfo, &executableCount, nullptr) != VK_SUCCESS ||
+        executableCount == 0)
+    {
+        return {};
+    }
+
+    std::vector<VkPipelineExecutablePropertiesKHR> executableProps(
+        executableCount,
+        VkPipelineExecutablePropertiesKHR{.sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR});
+    if (vkGetPipelineExecutablePropertiesKHR_(impl().vkDevice, &pipelineInfo, &executableCount, executableProps.data()) != VK_SUCCESS)
+        return {};
+
+    std::ostringstream out;
+    for (uint32_t executableIndex = 0; executableIndex < executableCount; ++executableIndex)
+    {
+        VkPipelineExecutableInfoKHR executableInfo{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR,
+            .pipeline = impl().vkPipeline,
+            .executableIndex = executableIndex,
+        };
+
+        uint32_t statisticCount = 0;
+        if (vkGetPipelineExecutableStatisticsKHR_(impl().vkDevice, &executableInfo, &statisticCount, nullptr) != VK_SUCCESS)
+            continue;
+
+        std::vector<VkPipelineExecutableStatisticKHR> statistics(
+            statisticCount,
+            VkPipelineExecutableStatisticKHR{.sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_STATISTIC_KHR});
+        if (vkGetPipelineExecutableStatisticsKHR_(impl().vkDevice, &executableInfo, &statisticCount, statistics.data()) != VK_SUCCESS)
+            continue;
+
+        out << "VAI_PIPELINE_STATS";
+        if (label && *label)
+            out << " label=" << label;
+        out << " executable=" << executableIndex
+            << " name=\"" << executableProps[executableIndex].name << "\""
+            << " description=\"" << executableProps[executableIndex].description << "\"\n";
+
+        for (const auto& stat : statistics)
+        {
+            out << "  " << stat.name << ": ";
+            switch (stat.format)
+            {
+            case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_BOOL32_KHR:
+                out << (stat.value.b32 ? "true" : "false");
+                break;
+            case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_INT64_KHR:
+                out << stat.value.i64;
+                break;
+            case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR:
+                out << stat.value.u64;
+                break;
+            case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_FLOAT64_KHR:
+                out << stat.value.f64;
+                break;
+            default:
+                out << "<unknown>";
+                break;
+            }
+            out << "\n";
+        }
+    }
+
+    return out.str();
 }
 
 

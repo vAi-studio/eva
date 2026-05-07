@@ -640,6 +640,7 @@ public:
     PipelineLayout layout() const;
     DescriptorSetLayout descSetLayout(uint32_t setId=0) const;
     uint32_t pushConstantSize() const;
+    std::string executableStatisticsText(const char* label = nullptr) const;
 };
 
 
