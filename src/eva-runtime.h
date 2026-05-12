@@ -1175,6 +1175,7 @@ struct ComputePipelineCreateInfo {
     // For coopmat2 shaders: provide workgroup size to skip SPIRV-Reflect
     // When both layout AND workgroupSize are provided, reflection is skipped entirely
     std::optional<std::array<uint32_t, 3>> workgroupSize;  // {x, y, z}
+    std::string debugName;
 };
 
 
@@ -1182,6 +1183,7 @@ struct BufferCreateInfo {
     uint64_t size;
     BUFFER_USAGE usage;
     MEMORY_PROPERTY reqMemProps;
+    std::string debugName;
 };
 
 

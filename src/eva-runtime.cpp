@@ -11,6 +11,7 @@
 #include <algorithm>// std::all_of, std::any_of
 #include <fstream>
 #include <sstream>
+#include <type_traits>
 #include "eva-native-factory.h"
 #include "eva-runtime.h"
 
@@ -121,6 +122,37 @@ PFN_vkGetBufferDeviceAddressKHR vkGetBufferDeviceAddressKHR_ = nullptr;
 PFN_vkGetPipelineExecutablePropertiesKHR vkGetPipelineExecutablePropertiesKHR_ = nullptr;
 PFN_vkGetPipelineExecutableInternalRepresentationsKHR vkGetPipelineExecutableInternalRepresentationsKHR_ = nullptr;
 PFN_vkGetPipelineExecutableStatisticsKHR vkGetPipelineExecutableStatisticsKHR_ = nullptr;
+
+#ifdef EVA_ENABLE_NSIGHT_DEBUG_LABELS
+PFN_vkSetDebugUtilsObjectNameEXT vkSetDebugUtilsObjectNameEXT_ = nullptr;
+
+template <typename Handle>
+static uint64_t debugObjectHandle(Handle handle)
+{
+    if constexpr (std::is_pointer_v<Handle>)
+        return reinterpret_cast<uint64_t>(handle);
+    else
+        return static_cast<uint64_t>(handle);
+}
+
+static void setDebugObjectName(
+    VkDevice device,
+    VkObjectType objectType,
+    uint64_t objectHandle,
+    const char* name)
+{
+    if (!vkSetDebugUtilsObjectNameEXT_ || !name || name[0] == '\0' || objectHandle == 0)
+        return;
+
+    VkDebugUtilsObjectNameInfoEXT info{
+        .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+        .objectType = objectType,
+        .objectHandle = objectHandle,
+        .pObjectName = name,
+    };
+    (void)vkSetDebugUtilsObjectNameEXT_(device, &info);
+}
+#endif
 
 #ifdef EVA_ENABLE_PERFORMANCE_QUERY
 // VK_KHR_performance_query
@@ -1641,6 +1673,11 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     };
     
     VkDevice vkDevice = create<VkDevice>(pd, deviceCreateInfo);
+
+#ifdef EVA_ENABLE_NSIGHT_DEBUG_LABELS
+    vkSetDebugUtilsObjectNameEXT_ = (PFN_vkSetDebugUtilsObjectNameEXT)
+        vkGetDeviceProcAddr(vkDevice, "vkSetDebugUtilsObjectNameEXT");
+#endif
     
     std::vector<std::vector<Queue>> queues(qfProps.size());
     for (auto qfIndex : uniqueQfIndices) 
@@ -1654,6 +1691,15 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         {
             VkQueue vkQueue;
             vkGetDeviceQueue(vkDevice, qfIndex, j, &vkQueue);
+#ifdef EVA_ENABLE_NSIGHT_DEBUG_LABELS
+            const std::string queueName =
+                "eva.queue.family" + std::to_string(qfIndex) + ".index" + std::to_string(j);
+            setDebugObjectName(
+                vkDevice,
+                VK_OBJECT_TYPE_QUEUE,
+                debugObjectHandle(vkQueue),
+                queueName.c_str());
+#endif
             auto pImpl = new Queue::Impl(
                 vkQueue,
                 qfIndex,
@@ -3273,6 +3319,14 @@ ComputePipeline Device::createComputePipeline(const ComputePipelineCreateInfo& i
         1, &createInfo,
         nullptr, &vkHandle));
 
+#ifdef EVA_ENABLE_NSIGHT_DEBUG_LABELS
+    setDebugObjectName(
+        impl().vkDevice,
+        VK_OBJECT_TYPE_PIPELINE,
+        debugObjectHandle(vkHandle),
+        info.debugName.c_str());
+#endif
+
     auto pImpl = new ComputePipeline::Impl(
         impl().vkDevice,
         vkHandle,
@@ -3795,6 +3849,22 @@ Buffer Device::createBuffer(const BufferCreateInfo& info)
     VkDeviceMemory memory = allocate<VkDeviceMemory>(impl().vkDevice, memInfo.first);
     ASSERT_SUCCESS(vkBindBufferMemory(impl().vkDevice, vkHandle, memory, 0));
 
+#ifdef EVA_ENABLE_NSIGHT_DEBUG_LABELS
+    setDebugObjectName(
+        impl().vkDevice,
+        VK_OBJECT_TYPE_BUFFER,
+        debugObjectHandle(vkHandle),
+        info.debugName.c_str());
+    if (!info.debugName.empty())
+    {
+        const std::string memoryName = info.debugName + ".memory";
+        setDebugObjectName(
+            impl().vkDevice,
+            VK_OBJECT_TYPE_DEVICE_MEMORY,
+            debugObjectHandle(memory),
+            memoryName.c_str());
+    }
+#endif
     
     auto pImpl = new Buffer::Impl(
         impl().vkDevice,
