@@ -212,9 +212,18 @@ function(eva_compile_shaders)
             set(SHADER_OUTPUT "${SHADER_DIR}/${SHADER_NAME}.spv")
         endif()
 
+        # Optimization: -O runs glslc's "performance" pass (spirv-opt -O internally).
+        # Default for glslc is -O0 (no opt), so this must be explicit.
+        # Debug builds keep -O0 + -g so SPIR-V is readable in RenderDoc / Nsight.
+        if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+            set(EVA_GLSLC_OPT_FLAGS -O0 -g)
+        else()
+            set(EVA_GLSLC_OPT_FLAGS -O)
+        endif()
+
         add_custom_command(
             OUTPUT ${SHADER_OUTPUT}
-            COMMAND ${EVA_GLSLC} --target-env=vulkan1.3 -o ${SHADER_OUTPUT} ${SHADER_SOURCE_ABS}
+            COMMAND ${EVA_GLSLC} --target-env=vulkan1.3 ${EVA_GLSLC_OPT_FLAGS} -o ${SHADER_OUTPUT} ${SHADER_SOURCE_ABS}
             DEPENDS ${SHADER_SOURCE_ABS}
             COMMENT "[EVA] Compiling shader: ${SHADER_NAME} -> ${SHADER_NAME}.spv"
             VERBATIM
