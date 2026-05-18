@@ -216,6 +216,7 @@ struct DeviceSettings {
     bool enableCooperativeMatrix = false;  // VK_KHR/NV cooperative matrix for Tensor Core
     bool enablePipelineExecutableInfo = false;  // VK_KHR_pipeline_executable_properties for SASS dump
     bool enableCudaKernelLaunch = false;  // VK_NV_cuda_kernel_launch for CUDA PTX kernels in Vulkan
+    bool enableExternalMemoryWin32 = false;  // VK_KHR_external_memory_win32 for CUDA runtime interop smokes
     // bool operator==(const DeviceSettings&) const = default;
     bool operator<=(const DeviceSettings& other) const {
         return (!enableGraphicsQueues || other.enableGraphicsQueues) &&
@@ -230,6 +231,7 @@ struct DeviceSettings {
                && (!enableCooperativeMatrix || other.enableCooperativeMatrix)
                && (!enablePipelineExecutableInfo || other.enablePipelineExecutableInfo)
                && (!enableCudaKernelLaunch || other.enableCudaKernelLaunch)
+               && (!enableExternalMemoryWin32 || other.enableExternalMemoryWin32)
                ;
     }
 };
@@ -1184,6 +1186,7 @@ struct BufferCreateInfo {
     BUFFER_USAGE usage;
     MEMORY_PROPERTY reqMemProps;
     std::string debugName;
+    bool exportMemoryWin32 = false;
 };
 
 

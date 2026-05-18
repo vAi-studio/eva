@@ -1465,6 +1465,19 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         }
     }
 
+    if (settings.enableExternalMemoryWin32)
+    {
+        if (supportsExt("VK_KHR_external_memory_win32"))
+        {
+            reqExtentions.push_back("VK_KHR_external_memory_win32");
+            printf("[EVA] VK_KHR_external_memory_win32 enabled\n");
+        }
+        else
+        {
+            printf("[EVA] VK_KHR_external_memory_win32 not available on this device\n");
+        }
+    }
+
     std::vector<uint32_t> qfIndices[queue_max];
     for (uint32_t i = 0; i < qfProps.size(); i++) 
     {
@@ -3828,8 +3841,14 @@ DescriptorSetLayout RaytracingPipeline::descSetLayout(uint32_t setId) const
 /////////////////////////////////////////////////////////////////////////////////////////
 Buffer Device::createBuffer(const BufferCreateInfo& info) 
 {
+    VkExternalMemoryBufferCreateInfo externalMemoryBufferInfo{
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
+        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT,
+    };
+
     auto vkHandle = create<VkBuffer>(impl().vkDevice, {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .pNext = info.exportMemoryWin32 ? &externalMemoryBufferInfo : nullptr,
         .size = info.size,
         .usage = (VkBufferUsageFlags)(uint32_t)info.usage,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,  // TODO: support VK_SHARING_MODE_CONCURRENT
@@ -3838,13 +3857,22 @@ Buffer Device::createBuffer(const BufferCreateInfo& info)
     auto memInfo = getMemoryAllocInfo(
         impl().vkPhysicalDevice, impl().vkDevice, vkHandle, (VkMemoryPropertyFlags)(uint32_t)info.reqMemProps);
 
-    static VkMemoryAllocateFlagsInfo flagsInfo{
+    VkExportMemoryAllocateInfo exportMemoryAllocateInfo{
+        .sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO,
+        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT,
+    };
+    void* allocationPNext = info.exportMemoryWin32 ? &exportMemoryAllocateInfo : nullptr;
+
+    VkMemoryAllocateFlagsInfo flagsInfo{
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,
+        .pNext = allocationPNext,
         .flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT
     };
 
     if ((uint32_t)info.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
         memInfo.first.pNext = &flagsInfo;
+    else
+        memInfo.first.pNext = allocationPNext;
 
     VkDeviceMemory memory = allocate<VkDeviceMemory>(impl().vkDevice, memInfo.first);
     ASSERT_SUCCESS(vkBindBufferMemory(impl().vkDevice, vkHandle, memory, 0));
