@@ -1477,6 +1477,18 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             printf("[EVA] VK_KHR_external_memory_win32 not available on this device\n");
         }
     }
+    if (settings.enableExternalSemaphoreWin32)
+    {
+        if (supportsExt("VK_KHR_external_semaphore_win32"))
+        {
+            reqExtentions.push_back("VK_KHR_external_semaphore_win32");
+            printf("[EVA] VK_KHR_external_semaphore_win32 enabled\n");
+        }
+        else
+        {
+            printf("[EVA] VK_KHR_external_semaphore_win32 not available on this device\n");
+        }
+    }
 
     std::vector<uint32_t> qfIndices[queue_max];
     for (uint32_t i = 0; i < qfProps.size(); i++) 
@@ -3070,10 +3082,15 @@ bool Fence::isSignaled() const
 /////////////////////////////////////////////////////////////////////////////////////////
 // Semaphore
 /////////////////////////////////////////////////////////////////////////////////////////
-Semaphore Device::createSemaphore()
+Semaphore Device::createSemaphore(bool exportWin32)
 {
+    VkExportSemaphoreCreateInfo exportInfo{
+        .sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO,
+        .handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT,
+    };
     auto vkHandle = create<VkSemaphore>(impl().vkDevice, {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = exportWin32 ? &exportInfo : nullptr,
     });
 
     auto pImpl = new Semaphore::Impl(
@@ -3082,6 +3099,8 @@ Semaphore Device::createSemaphore()
 
     return *impl().semaphores.insert(new Semaphore::Impl*(pImpl)).first;
 }
+
+void* Semaphore::nativeSemaphore() const { return impl().vkSemaphore; }
 
 
 /////////////////////////////////////////////////////////////////////////////////////////

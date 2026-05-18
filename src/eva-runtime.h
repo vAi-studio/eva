@@ -217,6 +217,7 @@ struct DeviceSettings {
     bool enablePipelineExecutableInfo = false;  // VK_KHR_pipeline_executable_properties for SASS dump
     bool enableCudaKernelLaunch = false;  // VK_NV_cuda_kernel_launch for CUDA PTX kernels in Vulkan
     bool enableExternalMemoryWin32 = false;  // VK_KHR_external_memory_win32 for CUDA runtime interop smokes
+    bool enableExternalSemaphoreWin32 = false;  // VK_KHR_external_semaphore_win32 for CUDA runtime sync smokes
     // bool operator==(const DeviceSettings&) const = default;
     bool operator<=(const DeviceSettings& other) const {
         return (!enableGraphicsQueues || other.enableGraphicsQueues) &&
@@ -232,6 +233,7 @@ struct DeviceSettings {
                && (!enablePipelineExecutableInfo || other.enablePipelineExecutableInfo)
                && (!enableCudaKernelLaunch || other.enableCudaKernelLaunch)
                && (!enableExternalMemoryWin32 || other.enableExternalMemoryWin32)
+               && (!enableExternalSemaphoreWin32 || other.enableExternalSemaphoreWin32)
                ;
     }
 };
@@ -342,7 +344,7 @@ public:
     Fence createFence(bool signaled=false);
     Result waitFences(std::vector<Fence> fences, bool waitAll, uint64_t timeout=uint64_t(-1));
     void resetFences(std::vector<Fence> fences);
-    Semaphore createSemaphore();
+    Semaphore createSemaphore(bool exportWin32=false);
     // TODO: Linux Clang 호환성 - 템플릿 구현은 Semaphore 정의 뒤로 이동
     template <int N> auto createSemaphores();
 
@@ -606,6 +608,7 @@ class Semaphore {
     VULKAN_CLASS_COMMON2(Semaphore)
 public:
 
+    void* nativeSemaphore() const;
     SemaphoreStage operator()(PIPELINE_STAGE stage) const;
 
 };
