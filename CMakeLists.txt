@@ -2,6 +2,12 @@ cmake_minimum_required(VERSION 3.16)
 
 project(eva VERSION 1.0.0 LANGUAGES CXX)
 
+# CMP0116 (CMake 3.20+): add_custom_command DEPFILE paths resolve relative to
+# the current binary dir under Ninja — used for shader header dependency tracking.
+if(POLICY CMP0116)
+    cmake_policy(SET CMP0116 NEW)
+endif()
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -223,8 +229,9 @@ function(eva_compile_shaders)
 
         add_custom_command(
             OUTPUT ${SHADER_OUTPUT}
-            COMMAND ${EVA_GLSLC} --target-env=vulkan1.3 ${EVA_GLSLC_OPT_FLAGS} -o ${SHADER_OUTPUT} ${SHADER_SOURCE_ABS}
+            COMMAND ${EVA_GLSLC} --target-env=vulkan1.3 ${EVA_GLSLC_OPT_FLAGS} -MD -MF ${SHADER_OUTPUT}.d -o ${SHADER_OUTPUT} ${SHADER_SOURCE_ABS}
             DEPENDS ${SHADER_SOURCE_ABS}
+            DEPFILE ${SHADER_OUTPUT}.d
             COMMENT "[EVA] Compiling shader: ${SHADER_NAME} -> ${SHADER_NAME}.spv"
             VERBATIM
         )
