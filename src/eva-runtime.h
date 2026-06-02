@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <map>
+#include <array>
 #include <string>
 #include <variant>
 #include <optional>
@@ -194,6 +195,7 @@ struct DeviceSettings {
 #ifdef EVA_ENABLE_RAYTRACING
     bool enableRaytracing;
 #endif
+    bool enableCooperativeMatrix = false;
     // bool operator==(const DeviceSettings&) const = default;
     bool operator<=(const DeviceSettings& other) const {
         return (!enableGraphicsQueues || other.enableGraphicsQueues) &&
@@ -205,6 +207,7 @@ struct DeviceSettings {
 #ifdef EVA_ENABLE_RAYTRACING
                && (!enableRaytracing  || other.enableRaytracing)
 #endif
+               && (!enableCooperativeMatrix || other.enableCooperativeMatrix)
                ;
     }
 };
@@ -1069,6 +1072,7 @@ struct ComputePipelineCreateInfo {
     ShaderStage csStage;
     std::optional<PipelineLayout> layout;
     bool autoLayoutAllowAllStages = false;
+    std::optional<std::array<uint32_t, 3>> workgroupSize;
 };
 
 

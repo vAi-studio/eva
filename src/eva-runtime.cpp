@@ -1199,6 +1199,59 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     }
 #endif
 
+    bool cooperativeMatrixSupported = false;
+    bool cooperativeMatrix2Supported = false;
+    if (settings.enableCooperativeMatrix)
+    {
+#ifdef VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME
+        if (supportsExt(VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME))
+        {
+            reqExtentions.push_back(VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);
+            cooperativeMatrixSupported = true;
+        }
+        else
+        {
+            printf("[EVA] VK_KHR_cooperative_matrix is not supported on this device. Cooperative matrix disabled.\n");
+        }
+#else
+        printf("[EVA] VK_KHR_cooperative_matrix is not available in this Vulkan SDK. Cooperative matrix disabled.\n");
+#endif
+
+        const bool cooperativeMatrix2ExtensionAvailable = supportsExt("VK_NV_cooperative_matrix2");
+#ifdef VK_NV_COOPERATIVE_MATRIX_2_SPEC_VERSION
+        if (cooperativeMatrix2ExtensionAvailable)
+        {
+            VkPhysicalDeviceCooperativeMatrix2FeaturesNV features{};
+            features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_2_FEATURES_NV;
+
+            VkPhysicalDeviceFeatures2 features2{};
+            features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            features2.pNext = &features;
+            vkGetPhysicalDeviceFeatures2(pd, &features2);
+
+            if (features.cooperativeMatrixWorkgroupScope &&
+                features.cooperativeMatrixFlexibleDimensions &&
+                features.cooperativeMatrixReductions &&
+                features.cooperativeMatrixConversions &&
+                features.cooperativeMatrixPerElementOperations &&
+                features.cooperativeMatrixTensorAddressing &&
+                features.cooperativeMatrixBlockLoads)
+            {
+                reqExtentions.push_back("VK_NV_cooperative_matrix2");
+                cooperativeMatrix2Supported = true;
+                printf("[EVA] VK_NV_cooperative_matrix2 enabled.\n");
+            }
+            else
+            {
+                printf("[EVA] VK_NV_cooperative_matrix2 is available but required features are incomplete.\n");
+            }
+        }
+#else
+        if (cooperativeMatrix2ExtensionAvailable)
+            printf("[EVA] VK_NV_cooperative_matrix2 is present, but this Vulkan SDK has no feature structs. coopmat2 disabled.\n");
+#endif
+    }
+
     std::vector<uint32_t> qfIndices[queue_max];
     for (uint32_t i = 0; i < qfProps.size(); i++) 
     {
@@ -1341,6 +1394,34 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             qfProps[qfIndex].queueCount,
             priorities[qfIndex].data()     // TODO: Set queue priorities (How to set accross different types but same family?)
         );
+    }
+
+    if (settings.enableCooperativeMatrix && cooperativeMatrixSupported)
+    {
+#ifdef VK_KHR_cooperative_matrix
+        chain.add(VkPhysicalDeviceCooperativeMatrixFeaturesKHR{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR,
+            .cooperativeMatrix = VK_TRUE,
+        });
+#else
+        printf("[EVA] VkPhysicalDeviceCooperativeMatrixFeaturesKHR is unavailable. Cooperative matrix disabled.\n");
+#endif
+
+        if (cooperativeMatrix2Supported)
+        {
+#ifdef VK_NV_COOPERATIVE_MATRIX_2_SPEC_VERSION
+            chain.add(VkPhysicalDeviceCooperativeMatrix2FeaturesNV{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_2_FEATURES_NV,
+                .cooperativeMatrixWorkgroupScope = VK_TRUE,
+                .cooperativeMatrixFlexibleDimensions = VK_TRUE,
+                .cooperativeMatrixReductions = VK_TRUE,
+                .cooperativeMatrixConversions = VK_TRUE,
+                .cooperativeMatrixPerElementOperations = VK_TRUE,
+                .cooperativeMatrixTensorAddressing = VK_TRUE,
+                .cooperativeMatrixBlockLoads = VK_TRUE,
+            });
+#endif
+        }
     }
 
     VkDeviceCreateInfo deviceCreateInfo{
@@ -2781,10 +2862,10 @@ size_t std::hash<eva::ShaderStage>::operator()(const eva::ShaderStage& stage) co
 /////////////////////////////////////////////////////////////////////////////////////////
 ComputePipeline Device::createComputePipeline(const ComputePipelineCreateInfo& info)
 {
-    ShaderModule csModule;
-    // const bool useReflect = !info.layout.has_value(); 
-    const bool useReflect = true; // force reflection for workgroup size extraction
+    const bool skipReflect = info.layout.has_value() && info.workgroupSize.has_value();
+    const bool useReflect = !skipReflect;
 
+    ShaderModule csModule;
     bool createTempModule = false;
 
     if (auto* mod = std::get_if<ShaderModule>(&*info.csStage.shader)) 
@@ -2801,27 +2882,43 @@ ComputePipeline Device::createComputePipeline(const ComputePipelineCreateInfo& i
         createTempModule = true;
     }
 
-    EVA_ASSERT(csModule.hasReflect());
-
-    auto [sizeX, sizeY, sizeZ] = extractWorkGroupSize(csModule.impl().pModule);
-
+    uint32_t sizeX = 1;
+    uint32_t sizeY = 1;
+    uint32_t sizeZ = 1;
     PipelineLayout layout;
-    if (info.layout.has_value()) 
+    if (skipReflect)
     {
+        const auto& workgroupSize = info.workgroupSize.value();
+        sizeX = workgroupSize[0];
+        sizeY = workgroupSize[1];
+        sizeZ = workgroupSize[2];
         layout = info.layout.value();
-    } 
-    else 
+    }
+    else
     {
-        auto layoutDesc = csModule.extractPipelineLayoutDesc();
-        if (info.autoLayoutAllowAllStages) 
+        EVA_ASSERT(csModule.hasReflect());
+        auto workgroupSize = extractWorkGroupSize(csModule.impl().pModule);
+        sizeX = workgroupSize[0];
+        sizeY = workgroupSize[1];
+        sizeZ = workgroupSize[2];
+
+        if (info.layout.has_value())
         {
-            for (auto& [setId, setLayout] : layoutDesc.setLayouts) 
-                for (auto& [bindId, binding] : setLayout.bindings) 
-                    binding.stageFlags = SHADER_STAGE::ALL;
-            if (layoutDesc.pushConstant)
-                layoutDesc.pushConstant->stageFlags = SHADER_STAGE::ALL;
+            layout = info.layout.value();
         }
-        layout = createPipelineLayout(std::move(layoutDesc));
+        else
+        {
+            auto layoutDesc = csModule.extractPipelineLayoutDesc();
+            if (info.autoLayoutAllowAllStages)
+            {
+                for (auto& [setId, setLayout] : layoutDesc.setLayouts)
+                    for (auto& [bindId, binding] : setLayout.bindings)
+                        binding.stageFlags = SHADER_STAGE::ALL;
+                if (layoutDesc.pushConstant)
+                    layoutDesc.pushConstant->stageFlags = SHADER_STAGE::ALL;
+            }
+            layout = createPipelineLayout(std::move(layoutDesc));
+        }
     }
 
     const auto& spec = info.csStage.specialization;
