@@ -325,7 +325,7 @@ static std::pair<VkMemoryAllocateInfo, VkMemoryPropertyFlags> getMemoryAllocInfo
     else if constexpr (std::is_same_v<VkResource, VkImage>)
         vkGetImageMemoryRequirements(device, resource, &memRequirements);
     else
-        static_assert(sizeof(VkResource) == 0, "Invalid VkResource type"); // TODO: Linux Clang 호환성 - dependent false
+        static_assert(sizeof(VkResource) == 0, "Invalid VkResource type");
 
     /*
     In Vulkan specification, the memoryTypes array is ordered by the following rules:
@@ -1592,7 +1592,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             .queueFamilyIndex = qfIndex,
             .queueCount = qfProps[qfIndex].queueCount,
             .pQueuePriorities = priorities[qfIndex].data()     // TODO: Set queue priorities (How to set accross different types but same family?)
-        }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
+        });
     }
 
     // VK_KHR_cooperative_matrix for Tensor Core GEMM
@@ -1773,13 +1773,13 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     }
 #endif
 
-    // @chay116 - Load vkGetBufferDeviceAddress (always, BDA used by all GEMM paths)
-    // Note: In Vulkan 1.2+, bufferDeviceAddress is a core feature (no KHR suffix)
+    // Load buffer device address entry points used by BDA-backed compute paths.
+    // In Vulkan 1.2+, bufferDeviceAddress is a core feature without the KHR suffix.
     if (vkGetBufferDeviceAddressKHR_ == nullptr)
     {
-        // Try core Vulkan 1.2 version first
+        // Try the core Vulkan 1.2 version first.
         vkGetBufferDeviceAddressKHR_ = (PFN_vkGetBufferDeviceAddressKHR)vkGetDeviceProcAddr(vkDevice, "vkGetBufferDeviceAddress");
-        // Fallback to KHR version if core not available
+        // Fall back to the KHR version if the core entry point is unavailable.
         if (vkGetBufferDeviceAddressKHR_ == nullptr)
             vkGetBufferDeviceAddressKHR_ = (PFN_vkGetBufferDeviceAddressKHR)vkGetDeviceProcAddr(vkDevice, "vkGetBufferDeviceAddressKHR");
 
@@ -2064,7 +2064,7 @@ Queue Queue::submit(std::vector<SubmissionBatchInfo>&& batches, std::optional<Fe
                 .value = 0,
                 .stageMask = (VkPipelineStageFlags2)(uint64_t)inWaitSem.stage,
                 .deviceIndex = 0
-            }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
+            });
         }
         waitSemOffset += info.waitSemaphoreInfoCount;
 
@@ -2080,7 +2080,7 @@ Queue Queue::submit(std::vector<SubmissionBatchInfo>&& batches, std::optional<Fe
                 .pNext = nullptr,
                 .commandBuffer = inCmdBuffer.impl().vkCmdBuffer,
                 .deviceMask = 0
-            }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
+            });
         }
         cmdBufferOffset += info.commandBufferInfoCount;
 
@@ -2095,7 +2095,7 @@ Queue Queue::submit(std::vector<SubmissionBatchInfo>&& batches, std::optional<Fe
                 .value = 0,
                 .stageMask = (VkPipelineStageFlags2)(uint64_t)inSignalSem.stage,
                 .deviceIndex = 0
-            }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
+            });
         }
         signalSemOffset += info.signalSemaphoreInfoCount;
     }
@@ -2464,7 +2464,7 @@ CommandBuffer CommandBuffer::barrier(
                     .srcAccessMask = (VkAccessFlags2) barrier.srcMask.scope.access,
                     .dstStageMask = (VkPipelineStageFlags2) barrier.dstMask.scope.stage,
                     .dstAccessMask = (VkAccessFlags2) barrier.dstMask.scope.access
-                }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
+                });
             }
             else if constexpr (std::is_same_v<T, BufferMemoryBarrier>)
             {
@@ -2480,7 +2480,7 @@ CommandBuffer CommandBuffer::barrier(
                     .buffer = barrier.buffer.buffer.impl().vkBuffer,
                     .offset = barrier.buffer.offset,
                     .size = barrier.buffer.size
-                }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
+                });
             }
             else if constexpr (std::is_same_v<T, ImageMemoryBarrier>) 
             {
@@ -2542,7 +2542,7 @@ CommandBuffer CommandBuffer::barrier(
                         .levelCount = VK_REMAINING_MIP_LEVELS,      // TODO: support level control
                         .layerCount = VK_REMAINING_ARRAY_LAYERS,    // TODO: support layer control
                     }
-                }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
+                });
 
                 // barrier.image.impl().currentLayout = barrier.newLayout; // update current layout
             }
@@ -2603,7 +2603,7 @@ CommandBuffer CommandBuffer::barrier(
                     .pNext = nullptr,
                     .srcAccessMask = (VkAccessFlags) barrier.srcMask.access,
                     .dstAccessMask = (VkAccessFlags) barrier.dstMask.access
-                }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
+                });
             }
             else if constexpr (std::is_same_v<T, BufferMemoryBarrier>) {
                 srcStageMask |= (VkPipelineStageFlags) barrier.srcMask.stage;
@@ -2618,7 +2618,7 @@ CommandBuffer CommandBuffer::barrier(
                     .buffer = barrier.buffer.impl().vkBuffer,
                     .offset = barrier.offset,
                     .size = barrier.size
-                }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
+                });
             }
             else if constexpr (std::is_same_v<T, ImageMemoryBarrier>) {
                 // TODO: Support image & image barrier
@@ -3869,7 +3869,7 @@ Buffer Device::createBuffer(const BufferCreateInfo& info)
 
     if ((uint32_t)info.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
     {
-        // @chay116: Ensure function pointer is loaded (coopmat2 or raytracing)
+        // Shader-device-address buffers require the BDA entry point.
         if (vkGetBufferDeviceAddressKHR_ == nullptr)
         {
             fprintf(stderr, "[EVA ERROR] vkGetBufferDeviceAddressKHR_ is null! "
@@ -3884,11 +3884,8 @@ Buffer Device::createBuffer(const BufferCreateInfo& info)
     }
 
     Buffer result = *impl().buffers.insert(new Buffer::Impl*(pImpl)).first;
-    // @chay116 - BEGIN
-    // Set cached values for inline accessors
     result._cachedSize = info.size;
     result._cachedUsage = info.usage;
-    // @chay116 - END
     return result;
 }
 
@@ -4264,7 +4261,7 @@ std::vector<DescriptorSet> DescriptorPool::operator()(std::vector<DescriptorSetL
     });
 
     std::vector<DescriptorSet> descSets;
-    descSets.reserve(setLayouts.size()); // TODO: Linux Clang 호환성 - vector(size) → reserve + push_back
+    descSets.reserve(setLayouts.size());
     for (uint32_t i = 0; i < setLayouts.size(); ++i)
     {
         auto pImpl = new DescriptorSet::Impl(

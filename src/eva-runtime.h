@@ -141,7 +141,7 @@ struct MemoryBarrier;
 struct BufferMemoryBarrier;
 struct ImageMemoryBarrier;
 
-// TODO: Linux Clang 호환성 - CopyRegion은 std::vector 기본값에서 사용되므로 완전한 타입 필요
+
 struct CopyRegion {
     uint64_t bufferOffset=0;
     uint32_t bufferRowLength=0;
@@ -338,7 +338,7 @@ public:
     Result waitFences(std::vector<Fence> fences, bool waitAll, uint64_t timeout=uint64_t(-1));
     void resetFences(std::vector<Fence> fences);
     Semaphore createSemaphore();
-    // TODO: Linux Clang 호환성 - 템플릿 구현은 Semaphore 정의 뒤로 이동
+
     template <int N> auto createSemaphores();
 
     ShaderModule createShaderModule(const ShaderModuleCreateInfo& info);
@@ -605,7 +605,7 @@ public:
 
 };
 
-// TODO: Linux Clang 호환성 - Device::createSemaphores 템플릿 구현 (Semaphore 정의 후)
+
 template <int N>
 auto Device::createSemaphores()
 {
@@ -649,33 +649,10 @@ public:
 class Buffer {
     VULKAN_CLASS_COMMON2(Buffer)
 
-    // @chay116 - BEGIN
-    // =========================================================================
-    // Cached values for inline header access
-    // =========================================================================
-    // [Problem]
-    // Buffer::size() and usage() originally called impl().size/usage, but:
-    // 1. Impl struct is defined only in eva-runtime.cpp (PIMPL pattern)
-    // 2. Functions defined in .cpp with 'inline' have internal linkage
-    // 3. Other translation units cannot call them → linker error (MSVC)
-    // 4. Removing 'inline' exports the symbol but prevents inlining → slower
-    //
-    // [Solution]
-    // Cache frequently-accessed values as class members, enabling true inline
-    // accessors in the header while preserving PIMPL encapsulation.
-    //
-    // [Performance Impact]
-    // In GPU inference workloads, Buffer::size() is called thousands of times
-    // per frame. Inlining eliminates function call overhead:
-    // - Before (non-inline): ~346 tok/s
-    // - After (inline):      ~610 tok/s (+76%)
-    //
-    // [Note]
-    // Values are set by Device::createBuffer() which is a friend class.
-    // =========================================================================
+    // Cached values for inline header access. They are initialized by
+    // Device::createBuffer() while the Vulkan implementation stays hidden.
     uint64_t _cachedSize = 0;
     BUFFER_USAGE _cachedUsage = {};
-    // @chay116 - END
 public:
     void* nativeBuffer() const;
 
@@ -696,11 +673,8 @@ public:
 
     void unmap();
 
-    // @chay116 - BEGIN
-    // Inline accessors - see comment above for why caching is needed
     uint64_t size() const { return _cachedSize; }
     BUFFER_USAGE usage() const { return _cachedUsage; }
-    // @chay116 - END
 
     MEMORY_PROPERTY memoryProperties() const;
 
@@ -776,7 +750,7 @@ public:
         uint32_t count
     );
 
-    // TODO: Linux Clang 호환성 - 템플릿 함수를 DescriptorSet 정의 뒤로 이동
+
     template<typename... Layouts>
     auto operator()(Layouts... layouts) requires (std::is_same_v<Layouts, DescriptorSetLayout> && ...);
 };
@@ -807,7 +781,7 @@ inline std::vector<DescriptorSet> DescriptorPool::operator()(DescriptorSetLayout
     return (*this)(std::vector<DescriptorSetLayout>(count, layout));
 }
 
-// TODO: Linux Clang 호환성 - 템플릿 함수는 DescriptorSet 정의 후에 구현해야 함
+
 template<typename... Layouts>
 auto DescriptorPool::operator()(Layouts... layouts) requires (std::is_same_v<Layouts, DescriptorSetLayout> && ...)
 {
@@ -838,7 +812,7 @@ struct BindingInfo {
     uint32_t descriptorCount;
     SHADER_STAGE stageFlags;
 
-    // TODO: Linux Clang 호환성 - libc++ try_emplace를 위해 생성자 추가
+
     BindingInfo() = default;
     BindingInfo(uint32_t b, DESCRIPTOR_TYPE d, uint32_t c, SHADER_STAGE s)
         : binding(b), descriptorType(d), descriptorCount(c), stageFlags(s) {}
@@ -1044,7 +1018,7 @@ struct ConstantID {
 // };
 
 
-template<uint32_t ID, class T>  // TODO: Linux Clang 호환성 - int → uint32_t (ConstantID와 일치)
+template<uint32_t ID, class T>
 inline auto constant_id(T v)
 {
     return ConstantID<ID, T>{v};
@@ -1055,7 +1029,7 @@ inline auto constant_id(T v)
 * If the specialization constant is of type boolean, size must be the byte size of VkBool32.
 * And in Vulkan, VkBool32 is defined as uint32_t.
 */
-template<uint32_t ID>  // TODO: Linux Clang 호환성 - int → uint32_t (ConstantID와 일치)
+template<uint32_t ID>
 inline auto constant_id(bool v)
 {
     return ConstantID<ID, uint32_t>{ v ? 1u : 0u };
@@ -1147,7 +1121,7 @@ struct ShaderStage {
     ShaderStage(ShaderType shader, SpecializationConstant&& spec ={})
     : shader(shader), specialization(std::move(spec)) {}
 
-    template<uint32_t ID, typename T>  // TODO: Linux Clang 호환성 - int → uint32_t (ConstantID와 일치)
+    template<uint32_t ID, typename T>
     ShaderStage operator+(ConstantID<ID, T> constant) &&
     {
         specialization.addConstant(constant);
@@ -1158,7 +1132,7 @@ struct ShaderStage {
 };
 
 
-template<uint32_t ID, typename T>  // TODO: Linux Clang 호환성 - int → uint32_t (ConstantID와 일치)
+template<uint32_t ID, typename T>
 inline ShaderStage operator+(ShaderInput shader, ConstantID<ID, T> constant)
 {
     return ShaderStage(shader) + constant;
