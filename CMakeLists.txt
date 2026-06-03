@@ -15,6 +15,7 @@ option(EVA_BUILD_SAMPLES "Build EVA sample projects" OFF)
 option(EVA_ENABLE_WINDOW "Enable window support" OFF)
 option(EVA_ENABLE_RAYTRACING "Enable raytracing support" OFF)
 option(EVA_ENABLE_PERFORMANCE_QUERY "Enable performance query support" OFF)
+option(EVA_ENABLE_NSIGHT_DEBUG_LABELS "Enable optional Vulkan debug-utils labels for profiling" OFF)
 
 # Find Vulkan
 find_package(Vulkan REQUIRED)
@@ -70,9 +71,11 @@ endif()
 # Create static library
 add_library(eva STATIC
     src/eva-runtime.cpp
+    src/eva-pipeline-binary.cpp
     src/eva-spirv-reflect.cpp
 
     src/eva-runtime.h
+    src/eva-pipeline-binary.h
     src/eva-enums.h
     src/eva-error.h
     src/eva-native-factory.h
@@ -108,6 +111,10 @@ endif()
 # Performance query support
 if(EVA_ENABLE_PERFORMANCE_QUERY)
     target_compile_definitions(eva PUBLIC EVA_ENABLE_PERFORMANCE_QUERY)
+endif()
+
+if(EVA_ENABLE_NSIGHT_DEBUG_LABELS)
+    target_compile_definitions(eva PUBLIC EVA_ENABLE_NSIGHT_DEBUG_LABELS)
 endif()
 
 # Raytracing support
@@ -215,7 +222,7 @@ function(eva_compile_shaders)
 
         add_custom_command(
             OUTPUT ${SHADER_OUTPUT}
-            COMMAND ${EVA_GLSLC} --target-env=vulkan1.3 -o ${SHADER_OUTPUT} ${SHADER_SOURCE_ABS}
+            COMMAND ${EVA_GLSLC} --target-env=vulkan1.3 -g -o ${SHADER_OUTPUT} ${SHADER_SOURCE_ABS}
             DEPENDS ${SHADER_SOURCE_ABS}
             COMMENT "[EVA] Compiling shader: ${SHADER_NAME} -> ${SHADER_NAME}.spv"
             VERBATIM

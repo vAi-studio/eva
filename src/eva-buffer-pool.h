@@ -14,6 +14,13 @@ struct BufferPoolConfig {
     uint32_t logLevel = 0;  // 0: off, 1: basic, 2: verbose
 };
 
+struct BufferPoolRequestStats {
+    size_t requests = 0;
+    size_t reuses = 0;
+    size_t allocations = 0;
+    size_t reusedBytes = 0;
+    size_t allocatedBytes = 0;
+};
 
 class BufferPool;
 
@@ -46,12 +53,17 @@ class BufferPool : public std::enable_shared_from_this<BufferPool>
         std::multimap<size_t, std::pair<Buffer, MEMORY_PROPERTY>>> bufferPool;
 
     size_t totalAllocated = 0;
+    BufferPoolRequestStats requestStats_;
 
 public:
     uint32_t logLevel;
 
     BufferPool(BufferPoolConfig config) 
     : device(config.device), logLevel(config.logLevel) {}
+
+    const BufferPoolRequestStats& requestStats() const { return requestStats_; }
+
+    void resetRequestStats() { requestStats_ = BufferPoolRequestStats{}; }
 
     PooledBuffer requestBuffer(
         BUFFER_USAGE usageFlags,
@@ -60,6 +72,7 @@ public:
         size_t maxSize = size_t(-1)
     )
     {
+        ++requestStats_.requests;
         auto& subPool = bufferPool[usageFlags];
 
         if (logLevel >= 1)
@@ -87,6 +100,8 @@ public:
             if (hasFlag(memProps, reqMemProps))
             {
                 Buffer result = std::move(it->second.first);
+                ++requestStats_.reuses;
+                requestStats_.reusedBytes += result.size();
                 subPool.erase(it);
                 if (logLevel >= 1)
                     std::printf("=> reuse %zu bytes\n", result.size());
@@ -96,6 +111,8 @@ public:
 
         // Create new buffer
         totalAllocated += minSize;
+        ++requestStats_.allocations;
+        requestStats_.allocatedBytes += minSize;
         if (logLevel >= 1)
             std::printf("=> alloc %zu bytes (total: %zu)\n", minSize, totalAllocated);
         return PooledBuffer{

@@ -43,6 +43,11 @@ typedef uint64_t DeviceSize;
 typedef uint32_t Flags;
 typedef uint32_t SampleMask;
 
+// Query if VK_NV_cooperative_matrix2 extension was enabled
+bool isCoopMat2Supported();
+
+// Query if VK_NV_cuda_kernel_launch extension was enabled
+bool isCudaKernelLaunchSupported();
 
 class Runtime;
 class Device;
@@ -139,7 +144,20 @@ struct MemoryBarrier;
 struct BufferMemoryBarrier;
 struct ImageMemoryBarrier;
 
-struct CopyRegion;
+// TODO: Linux Clang 호환성 - CopyRegion은 std::vector 기본값에서 사용되므로 완전한 타입 필요
+struct CopyRegion {
+    uint64_t bufferOffset=0;
+    uint32_t bufferRowLength=0;
+    uint32_t bufferImageHeight=0;
+    uint32_t offsetX=0;
+    uint32_t offsetY=0;
+    uint32_t offsetZ=0;
+    uint32_t baseLayer=0;
+    uint32_t width=0;
+    uint32_t height=0;
+    uint32_t depth=0;
+    uint32_t layerCount=0;
+};
 struct WindowCreateInfo;
 
 
@@ -195,7 +213,12 @@ struct DeviceSettings {
 #ifdef EVA_ENABLE_RAYTRACING
     bool enableRaytracing;
 #endif
-    bool enableCooperativeMatrix = false;
+    bool enableCooperativeMatrix = false;  // VK_KHR/NV cooperative matrix for Tensor Core
+    bool enablePipelineExecutableInfo = false;  // VK_KHR_pipeline_executable_properties for SASS dump
+    bool enablePipelineBinaryCapture = false;  // VK_KHR_pipeline_binary capture for native pipeline payload dumps
+    bool enableCudaKernelLaunch = false;  // VK_NV_cuda_kernel_launch for CUDA PTX kernels in Vulkan
+    bool enableExternalMemoryWin32 = false;  // VK_KHR_external_memory_win32 for CUDA runtime interop smokes
+    bool enableExternalSemaphoreWin32 = false;  // VK_KHR_external_semaphore_win32 for CUDA runtime sync smokes
     // bool operator==(const DeviceSettings&) const = default;
     bool operator<=(const DeviceSettings& other) const {
         return (!enableGraphicsQueues || other.enableGraphicsQueues) &&
@@ -208,10 +231,37 @@ struct DeviceSettings {
                && (!enableRaytracing  || other.enableRaytracing)
 #endif
                && (!enableCooperativeMatrix || other.enableCooperativeMatrix)
+               && (!enablePipelineExecutableInfo || other.enablePipelineExecutableInfo)
+               && (!enablePipelineBinaryCapture || other.enablePipelineBinaryCapture)
+               && (!enableCudaKernelLaunch || other.enableCudaKernelLaunch)
+               && (!enableExternalMemoryWin32 || other.enableExternalMemoryWin32)
+               && (!enableExternalSemaphoreWin32 || other.enableExternalSemaphoreWin32)
                ;
     }
 };
 
+
+struct DeviceCapabilities {
+    // Basic info
+    std::string deviceName;
+    bool isDiscreteGpu;
+
+    // Compute limits
+    uint32_t maxWorkgroupSize[3];
+    uint32_t maxWorkgroupInvocations;
+    uint32_t maxSharedMemorySize;
+
+    // Subgroup
+    uint32_t subgroupSize;
+    uint32_t subgroupOperations;  // bitmask of supported operations
+
+    // Optional feature support
+    bool supportsAtomicFloat;         // shaderBufferFloat32AtomicAdd
+    bool supportsAtomicFloatShared;   // shaderSharedFloat32AtomicAdd
+
+    // Memory
+    uint64_t deviceLocalMemorySize;
+};
 
 #ifdef EVA_ENABLE_PERFORMANCE_QUERY
 struct PerformanceCounter {
@@ -233,7 +283,6 @@ union PerformanceCounterResult {
     double   f64;
 };
 #endif
-
 
 enum QueueType {
     queue_graphics,
@@ -261,8 +310,9 @@ class Runtime {
 public:
     static Runtime& get();    // singleton pattern
     uint32_t deviceCount() const;
-    Device device(int gpuIndex=-1); 
+    Device device(int gpuIndex=-1);
     Device device(DeviceSettings settings);
+    void* nativeInstance() const;
 
 #ifdef EVA_ENABLE_WINDOW
     Window createWindow(WindowCreateInfo info);
@@ -275,8 +325,13 @@ class Device {
     VULKAN_CLASS_COMMON2(Device)
 
 public:
+    void* nativeDevice() const;
+    void* nativePhysicalDevice() const;
+    bool hasShaderAtomicFloat() const;
+
     void reportGPUQueueFamilies() const;
     void reportAssignedQueues() const;
+    const DeviceCapabilities& capabilities() const;
 
     uint32_t queueCount(QueueType type) const;
     bool supportPresent(QueueType type) const;
@@ -291,13 +346,9 @@ public:
     Fence createFence(bool signaled=false);
     Result waitFences(std::vector<Fence> fences, bool waitAll, uint64_t timeout=uint64_t(-1));
     void resetFences(std::vector<Fence> fences);
-    Semaphore createSemaphore();
-    template <int N> auto createSemaphores()
-    {
-        return [this]<std::size_t... I>(std::index_sequence<I...>) {
-            return std::make_tuple(((void)I, createSemaphore())...);
-        }(std::make_index_sequence<N>{});
-    }
+    Semaphore createSemaphore(bool exportWin32=false);
+    // TODO: Linux Clang 호환성 - 템플릿 구현은 Semaphore 정의 뒤로 이동
+    template <int N> auto createSemaphores();
 
     ShaderModule createShaderModule(const ShaderModuleCreateInfo& info);
     ComputePipeline createComputePipeline(const ComputePipelineCreateInfo& info);
@@ -310,6 +361,7 @@ public:
     DescriptorPool createDescriptorPool(const DescriptorPoolCreateInfo& info);
 
     // Timestamp Query Pool
+    QueryPool createQueryPool(uint32_t queryCount);
     bool supportsTimestampQueries() const;
     QueryPool createTimestampQueryPool(uint32_t queryCount);
 
@@ -390,6 +442,8 @@ class CommandBuffer {
     VULKAN_CLASS_COMMON2(CommandBuffer)
 public:
 
+    void* nativeCommandBuffer() const;
+
     QueueType type() const;
 
     uint32_t queueFamilyIndex() const;
@@ -422,7 +476,7 @@ public:
     );
 
     CommandBuffer bindDescSets(
-        std::vector<DescriptorSet> descSets, 
+        std::vector<DescriptorSet> descSets,
         uint32_t firstSet=0
     );
 
@@ -449,16 +503,23 @@ public:
     );
 
 	CommandBuffer copyBuffer(
-        Buffer src, 
-        Buffer dst, 
-        uint64_t srcOffset = 0, 
-        uint64_t dstOffset = 0, 
+        Buffer src,
+        Buffer dst,
+        uint64_t srcOffset = 0,
+        uint64_t dstOffset = 0,
         uint64_t size = EVA_WHOLE_SIZE
     );
 
     CommandBuffer copyBuffer(
         BufferRange src,
-        BufferRange dst 
+        BufferRange dst
+    );
+
+    CommandBuffer fillBuffer(
+        Buffer dst,
+        uint32_t data = 0,
+        uint64_t dstOffset = 0,
+        uint64_t size = EVA_WHOLE_SIZE
     );
 
     CommandBuffer copyImage(
@@ -549,9 +610,19 @@ class Semaphore {
     VULKAN_CLASS_COMMON2(Semaphore)
 public:
 
+    void* nativeSemaphore() const;
     SemaphoreStage operator()(PIPELINE_STAGE stage) const;
 
 };
+
+// TODO: Linux Clang 호환성 - Device::createSemaphores 템플릿 구현 (Semaphore 정의 후)
+template <int N>
+auto Device::createSemaphores()
+{
+    return [this]<std::size_t... I>(std::index_sequence<I...>) {
+        return std::make_tuple(((void)I, createSemaphore())...);
+    }(std::make_index_sequence<N>{});
+}
 
 
 class ShaderModule {
@@ -575,6 +646,10 @@ public:
 
     PipelineLayout layout() const;
     DescriptorSetLayout descSetLayout(uint32_t setId=0) const;
+    uint32_t pushConstantSize() const;
+    std::string executableStatisticsText(const char* label = nullptr) const;
+    std::string executableInternalRepresentationsText(const char* label = nullptr, size_t maxRepresentationBytes = 256 * 1024) const;
+    std::vector<std::vector<uint8_t>> capturedPipelineBinaryData() const;
 };
 
 
@@ -583,32 +658,67 @@ public:
 
 class Buffer {
     VULKAN_CLASS_COMMON2(Buffer)
+
+    // @chay116 - BEGIN
+    // =========================================================================
+    // Cached values for inline header access
+    // =========================================================================
+    // [Problem]
+    // Buffer::size() and usage() originally called impl().size/usage, but:
+    // 1. Impl struct is defined only in eva-runtime.cpp (PIMPL pattern)
+    // 2. Functions defined in .cpp with 'inline' have internal linkage
+    // 3. Other translation units cannot call them → linker error (MSVC)
+    // 4. Removing 'inline' exports the symbol but prevents inlining → slower
+    //
+    // [Solution]
+    // Cache frequently-accessed values as class members, enabling true inline
+    // accessors in the header while preserving PIMPL encapsulation.
+    //
+    // [Performance Impact]
+    // In GPU inference workloads, Buffer::size() is called thousands of times
+    // per frame. Inlining eliminates function call overhead:
+    // - Before (non-inline): ~346 tok/s
+    // - After (inline):      ~610 tok/s (+76%)
+    //
+    // [Note]
+    // Values are set by Device::createBuffer() which is a friend class.
+    // =========================================================================
+    uint64_t _cachedSize = 0;
+    BUFFER_USAGE _cachedUsage = {};
+    // @chay116 - END
 public:
-    
+    void* nativeBuffer() const;
+    void* nativeMemory() const;
+
     uint8_t* map(
-        uint64_t offset=0, 
+        uint64_t offset=0,
         uint64_t size=EVA_WHOLE_SIZE
     );
- 
+
     void flush(
-        uint64_t offset=0, 
+        uint64_t offset=0,
         uint64_t size=EVA_WHOLE_SIZE
     ) const;
 
     void invalidate(
-        uint64_t offset=0, 
+        uint64_t offset=0,
         uint64_t size=EVA_WHOLE_SIZE
     ) const;
-    
+
     void unmap();
-    uint64_t size() const;
-    BUFFER_USAGE usage() const;
+
+    // @chay116 - BEGIN
+    // Inline accessors - see comment above for why caching is needed
+    uint64_t size() const { return _cachedSize; }
+    BUFFER_USAGE usage() const { return _cachedUsage; }
+    // @chay116 - END
+
     MEMORY_PROPERTY memoryProperties() const;
 
     DeviceAddress deviceAddress() const;
 
     BufferRange operator()(
-        uint64_t offset=0, 
+        uint64_t offset=0,
         uint64_t size=EVA_WHOLE_SIZE
     );
 
@@ -658,6 +768,7 @@ class PipelineLayout {
 public:
 
     DescriptorSetLayout descSetLayout(uint32_t setId) const;
+    uint32_t pushConstantSize() const;
 };
 
 
@@ -676,15 +787,9 @@ public:
         uint32_t count
     );
 
+    // TODO: Linux Clang 호환성 - 템플릿 함수를 DescriptorSet 정의 뒤로 이동
     template<typename... Layouts>
-    auto operator()(Layouts... layouts) requires (std::is_same_v<Layouts, DescriptorSetLayout> && ...)
-    {
-        auto sets = (*this)(std::vector<DescriptorSetLayout>{ layouts... });
-
-        return [&]<std::size_t... I>(std::index_sequence<I...>) {
-            return std::make_tuple(sets[I]...);
-        }(std::index_sequence_for<Layouts...>{});
-    }
+    auto operator()(Layouts... layouts) requires (std::is_same_v<Layouts, DescriptorSetLayout> && ...);
 };
 
 
@@ -708,9 +813,20 @@ inline DescriptorSet DescriptorPool::operator()(DescriptorSetLayout layout)
     return (*this)(std::vector<DescriptorSetLayout>{layout})[0];
 }
 
-inline std::vector<DescriptorSet> DescriptorPool::operator()(DescriptorSetLayout layout, uint32_t count) 
+inline std::vector<DescriptorSet> DescriptorPool::operator()(DescriptorSetLayout layout, uint32_t count)
 {
     return (*this)(std::vector<DescriptorSetLayout>(count, layout));
+}
+
+// TODO: Linux Clang 호환성 - 템플릿 함수는 DescriptorSet 정의 후에 구현해야 함
+template<typename... Layouts>
+auto DescriptorPool::operator()(Layouts... layouts) requires (std::is_same_v<Layouts, DescriptorSetLayout> && ...)
+{
+    auto sets = (*this)(std::vector<DescriptorSetLayout>{ layouts... });
+
+    return [&]<std::size_t... I>(std::index_sequence<I...>) {
+        return std::make_tuple(sets[I]...);
+    }(std::index_sequence_for<Layouts...>{});
 }
 
 
@@ -732,6 +848,11 @@ struct BindingInfo {
     DESCRIPTOR_TYPE descriptorType;
     uint32_t descriptorCount;
     SHADER_STAGE stageFlags;
+
+    // TODO: Linux Clang 호환성 - libc++ try_emplace를 위해 생성자 추가
+    BindingInfo() = default;
+    BindingInfo(uint32_t b, DESCRIPTOR_TYPE d, uint32_t c, SHADER_STAGE s)
+        : binding(b), descriptorType(d), descriptorCount(c), stageFlags(s) {}
 
     BindingInfo& operator|=(BindingInfo&& other) {
         if (binding == other.binding 
@@ -902,20 +1023,7 @@ inline std::vector<DescriptorSet> operator,(DescriptorSet lhs, DescriptorSet rhs
 
 
 
-struct CopyRegion {
-    uint64_t bufferOffset=0;
-    uint32_t bufferRowLength=0;
-    uint32_t bufferImageHeight=0;
-    uint32_t offsetX=0;
-    uint32_t offsetY=0;
-    uint32_t offsetZ=0;
-    uint32_t baseLayer=0;
-    uint32_t width=0; 
-    uint32_t height=0; 
-    uint32_t depth=0;
-    uint32_t layerCount=0;
-};
-
+// CopyRegion은 위로 이동됨 (Linux Clang 호환성)
 
 struct SpvBlob {
     std::shared_ptr<uint32_t[]> data;
@@ -947,7 +1055,7 @@ struct ConstantID {
 // };
 
 
-template<int ID, class T>
+template<uint32_t ID, class T>  // TODO: Linux Clang 호환성 - int → uint32_t (ConstantID와 일치)
 inline auto constant_id(T v)
 {
     return ConstantID<ID, T>{v};
@@ -958,7 +1066,7 @@ inline auto constant_id(T v)
 * If the specialization constant is of type boolean, size must be the byte size of VkBool32.
 * And in Vulkan, VkBool32 is defined as uint32_t.
 */
-template<int ID>
+template<uint32_t ID>  // TODO: Linux Clang 호환성 - int → uint32_t (ConstantID와 일치)
 inline auto constant_id(bool v)
 {
     return ConstantID<ID, uint32_t>{ v ? 1u : 0u };
@@ -1050,7 +1158,7 @@ struct ShaderStage {
     ShaderStage(ShaderType shader, SpecializationConstant&& spec ={})
     : shader(shader), specialization(std::move(spec)) {}
 
-    template<uint32_t ID, typename T>
+    template<uint32_t ID, typename T>  // TODO: Linux Clang 호환성 - int → uint32_t (ConstantID와 일치)
     ShaderStage operator+(ConstantID<ID, T> constant) &&
     {
         specialization.addConstant(constant);
@@ -1061,7 +1169,7 @@ struct ShaderStage {
 };
 
 
-template<uint32_t ID, typename T>
+template<uint32_t ID, typename T>  // TODO: Linux Clang 호환성 - int → uint32_t (ConstantID와 일치)
 inline ShaderStage operator+(ShaderInput shader, ConstantID<ID, T> constant)
 {
     return ShaderStage(shader) + constant;
@@ -1072,7 +1180,10 @@ struct ComputePipelineCreateInfo {
     ShaderStage csStage;
     std::optional<PipelineLayout> layout;
     bool autoLayoutAllowAllStages = false;
-    std::optional<std::array<uint32_t, 3>> workgroupSize;
+    // For coopmat2 shaders: provide workgroup size to skip SPIRV-Reflect
+    // When both layout AND workgroupSize are provided, reflection is skipped entirely
+    std::optional<std::array<uint32_t, 3>> workgroupSize;  // {x, y, z}
+    std::string debugName;
 };
 
 
@@ -1080,6 +1191,8 @@ struct BufferCreateInfo {
     uint64_t size;
     BUFFER_USAGE usage;
     MEMORY_PROPERTY reqMemProps;
+    std::string debugName;
+    bool exportMemoryWin32 = false;
 };
 
 

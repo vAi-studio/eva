@@ -10,6 +10,9 @@
 #include <set>
 #include <algorithm>// std::all_of, std::any_of
 #include <fstream>
+#include <sstream>
+#include <type_traits>
+#include "eva-pipeline-binary.h"
 #include "eva-native-factory.h"
 #include "eva-runtime.h"
 
@@ -35,30 +38,62 @@
     #endif
 #endif
 
+namespace eva {
+    static bool gCoopMat2Supported = false;
+    bool isCoopMat2Supported() { return gCoopMat2Supported; }
+
+    static bool gCudaKernelLaunchSupported = false;
+    bool isCudaKernelLaunchSupported() { return gCudaKernelLaunchSupported; }
+}
+
+#ifdef EVA_ENABLE_NSIGHT_DEBUG_LABELS
+static bool supportsInstanceExtension(const char* name)
+{
+    uint32_t count = 0;
+    if (vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr) != VK_SUCCESS)
+        return false;
+
+    std::vector<VkExtensionProperties> extensions(count);
+    if (count > 0 &&
+        vkEnumerateInstanceExtensionProperties(nullptr, &count, extensions.data()) != VK_SUCCESS)
+    {
+        return false;
+    }
+
+    return std::any_of(extensions.begin(), extensions.end(), [&](const auto& extension) {
+        return strcmp(extension.extensionName, name) == 0;
+    });
+}
+#endif
+
 std::vector<const char*> getRequiredInstanceExtensions()
 {
+    std::vector<const char*> extensions;
 #ifdef EVA_ENABLE_WINDOW
-    return { 
-        "VK_KHR_surface" 
+    extensions.push_back("VK_KHR_surface");
 
     #ifdef EVA_PLATFORM_WINDOWS
-        , "VK_KHR_win32_surface"
+    extensions.push_back("VK_KHR_win32_surface");
     #elif defined(EVA_PLATFORM_ANDROID)
-        , "VK_KHR_android_surface"
+    extensions.push_back("VK_KHR_android_surface");
     #elif defined(EVA_PLATFORM_XLIB)
-        , "VK_KHR_xlib_surface"
+    extensions.push_back("VK_KHR_xlib_surface");
     #elif defined(EVA_PLATFORM_WAYLAND)
-        , "VK_KHR_wayland_surface"
+    extensions.push_back("VK_KHR_wayland_surface");
     #elif defined(EVA_PLATFORM_MACOS) || defined(EVA_PLATFORM_IOS)
-        , "VK_EXT_metal_surface"
-        , "VK_KHR_portability_enumeration"
+    extensions.push_back("VK_EXT_metal_surface");
+    extensions.push_back("VK_KHR_portability_enumeration");
     #endif
-
-    };
-    
-#else
-    return {};
 #endif
+
+#ifdef EVA_ENABLE_NSIGHT_DEBUG_LABELS
+    if (supportsInstanceExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME))
+        extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    else
+        printf("[EVA] VK_EXT_debug_utils unavailable; Nsight debug labels disabled.\n");
+#endif
+
+    return extensions;
 }
 
 
@@ -85,6 +120,40 @@ eva::SpvBlob eva::SpvBlob::readFrom(const char* filepath)
 
 
 PFN_vkGetBufferDeviceAddressKHR vkGetBufferDeviceAddressKHR_ = nullptr;
+PFN_vkGetPipelineExecutablePropertiesKHR vkGetPipelineExecutablePropertiesKHR_ = nullptr;
+PFN_vkGetPipelineExecutableInternalRepresentationsKHR vkGetPipelineExecutableInternalRepresentationsKHR_ = nullptr;
+PFN_vkGetPipelineExecutableStatisticsKHR vkGetPipelineExecutableStatisticsKHR_ = nullptr;
+
+#ifdef EVA_ENABLE_NSIGHT_DEBUG_LABELS
+PFN_vkSetDebugUtilsObjectNameEXT vkSetDebugUtilsObjectNameEXT_ = nullptr;
+
+template <typename Handle>
+static uint64_t debugObjectHandle(Handle handle)
+{
+    if constexpr (std::is_pointer_v<Handle>)
+        return reinterpret_cast<uint64_t>(handle);
+    else
+        return static_cast<uint64_t>(handle);
+}
+
+static void setDebugObjectName(
+    VkDevice device,
+    VkObjectType objectType,
+    uint64_t objectHandle,
+    const char* name)
+{
+    if (!vkSetDebugUtilsObjectNameEXT_ || !name || name[0] == '\0' || objectHandle == 0)
+        return;
+
+    VkDebugUtilsObjectNameInfoEXT info{
+        .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+        .objectType = objectType,
+        .objectHandle = objectHandle,
+        .pObjectName = name,
+    };
+    (void)vkSetDebugUtilsObjectNameEXT_(device, &info);
+}
+#endif
 
 #ifdef EVA_ENABLE_PERFORMANCE_QUERY
 // VK_KHR_performance_query
@@ -176,15 +245,60 @@ static void printGpuInfo(uint32_t order, VkPhysicalDevice physicalDevice)
 {
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(physicalDevice, &props);
-    printf("[GPU %d] Device Name: %-30s API Version: %d.%d.%d  Driver Version: %d.%d.%d  Device Type: %-15s\n",
-        order,
-        props.deviceName,
-        VK_VERSION_MAJOR(props.apiVersion), VK_VERSION_MINOR(props.apiVersion), VK_VERSION_PATCH(props.apiVersion),
-        VK_VERSION_MAJOR(props.driverVersion), VK_VERSION_MINOR(props.driverVersion), VK_VERSION_PATCH(props.driverVersion),
+
+    printf("[GPU %d] %s\n", order, props.deviceName);
+    printf("        API Version: %d.%d.%d\n",
+        VK_VERSION_MAJOR(props.apiVersion), VK_VERSION_MINOR(props.apiVersion), VK_VERSION_PATCH(props.apiVersion));
+    printf("        Driver Version: %d.%d.%d\n",
+        VK_VERSION_MAJOR(props.driverVersion), VK_VERSION_MINOR(props.driverVersion), VK_VERSION_PATCH(props.driverVersion));
+    printf("        Device Type: %s\n",
         props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? "Integrated GPU" :
             props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? "Discrete GPU" :
                 props.deviceType == VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU ? "Virtual GPU" :
                     props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU ? "CPU" : "Other");
+
+    // Device Local Memory 정보
+    VkPhysicalDeviceMemoryProperties memProps;
+    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProps);
+    for (uint32_t i = 0; i < memProps.memoryHeapCount; i++) {
+        if (memProps.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+            printf("        Device Local Memory (VRAM): %.2f GB\n",
+                memProps.memoryHeaps[i].size / (1024.0 * 1024.0 * 1024.0));
+            break;
+        }
+    }
+
+    // Compute Shader 정보
+    printf("        Max Workgroup Size:  [%u, %u, %u]\n",
+        props.limits.maxComputeWorkGroupSize[0],
+        props.limits.maxComputeWorkGroupSize[1],
+        props.limits.maxComputeWorkGroupSize[2]);
+    printf("        Max Workgroup Invocations: %u\n", props.limits.maxComputeWorkGroupInvocations);
+    printf("        Max Shared Memory: %u bytes (%.1f KB)\n",
+        props.limits.maxComputeSharedMemorySize,
+        props.limits.maxComputeSharedMemorySize / 1024.0f);
+
+    // Subgroup 정보 (Vulkan 1.1+)
+    VkPhysicalDeviceSubgroupProperties subgroupProps = {};
+    subgroupProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
+    subgroupProps.pNext = nullptr;
+
+    VkPhysicalDeviceProperties2 props2 = {};
+    props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    props2.pNext = &subgroupProps;
+
+    vkGetPhysicalDeviceProperties2(physicalDevice, &props2);
+
+    printf("        Subgroup Size: %u\n", subgroupProps.subgroupSize);
+    printf("        Subgroup Supported Operations: 0x%x", subgroupProps.supportedOperations);
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_BASIC_BIT) printf(" BASIC");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_VOTE_BIT) printf(" VOTE");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_ARITHMETIC_BIT) printf(" ARITHMETIC");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_BALLOT_BIT) printf(" BALLOT");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_SHUFFLE_BIT) printf(" SHUFFLE");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_SHUFFLE_RELATIVE_BIT) printf(" SHUFFLE_REL");
+    if (subgroupProps.supportedOperations & VK_SUBGROUP_FEATURE_QUAD_BIT) printf(" QUAD");
+    printf("\n");
 }
 
 static inline VkPhysicalDeviceMemoryProperties getMemorySpec(VkPhysicalDevice physicalDevice)
@@ -213,8 +327,8 @@ static std::pair<VkMemoryAllocateInfo, VkMemoryPropertyFlags> getMemoryAllocInfo
         vkGetBufferMemoryRequirements(device, resource, &memRequirements);  // It should be removed for performance!
     else if constexpr (std::is_same_v<VkResource, VkImage>)
         vkGetImageMemoryRequirements(device, resource, &memRequirements);
-    else 
-        static_assert(false, "Invalid VkResource type");
+    else
+        static_assert(sizeof(VkResource) == 0, "Invalid VkResource type"); // TODO: Linux Clang 호환성 - dependent false
 
     /*
     In Vulkan specification, the memoryTypes array is ordered by the following rules:
@@ -264,6 +378,7 @@ struct Device::Impl {
     // const VkInstance vkInstance;
     const Runtime& parent;
     const DeviceSettings settings;
+    const DeviceCapabilities capabilities;
 
     struct Features {
         bool synchronization2 = false;
@@ -273,13 +388,14 @@ struct Device::Impl {
         bool shaderFloat16 = false;
         bool storageBuffer16BitAccess = false;
         bool shaderBufferFloat32AtomicAdd = false;
-        
+
         bool hostQueryReset = false;
+        bool bufferDeviceAddress = false;
+        bool pipelineBinaries = false;
 #ifdef EVA_ENABLE_PERFORMANCE_QUERY
         bool performanceCounterQueryPools = false;
 #endif
 #ifdef EVA_ENABLE_RAYTRACING
-        bool bufferDeviceAddress = false;
         bool accelerationStructure = false;
         bool rayTracingPipeline = false;
 #endif
@@ -318,21 +434,23 @@ struct Device::Impl {
 
     CommandPool defaultCmdPool[queue_max][8] = {};
 
-    Impl(VkPhysicalDevice vkPhysicalDevice,   
-        VkDevice vkDevice, 
+    Impl(VkPhysicalDevice vkPhysicalDevice,
+        VkDevice vkDevice,
         const Runtime& parent,
         const DeviceSettings& settings,
+        const DeviceCapabilities& capabilities,
         uint32_t graphicsQfIndex,
         uint32_t computeQfIndex,
         uint32_t transferQfIndex,
-        std::vector<std::vector<Queue>>&& queues) 
+        std::vector<std::vector<Queue>>&& queues)
     : vkPhysicalDevice(vkPhysicalDevice)
     , vkDevice(vkDevice)
     , parent(parent)
     , settings(settings)
+    , capabilities(capabilities)
     , qfIndex{
-        graphicsQfIndex, 
-        computeQfIndex, 
+        graphicsQfIndex,
+        computeQfIndex,
         transferQfIndex}
         , qCount{
             graphicsQfIndex != uint32_t(-1) ? (uint32_t) queues[graphicsQfIndex].size() : 0,
@@ -828,6 +946,8 @@ Runtime::~Runtime()
 #endif
 }
 
+void* Runtime::nativeInstance() const { return impl().instance; }
+
 uint32_t Runtime::deviceCount() const
 {
     return (uint32_t)impl().devices.size();
@@ -935,7 +1055,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     ///////////////////////////////////////////////////////////////////////////////////////////
     VkPhysicalDevice pd = physicalDevices[selected];
     auto qfProps = arrayFrom(vkGetPhysicalDeviceQueueFamilyProperties, pd);
-    
+
     auto supportedExtensions = arrayFrom(vkEnumerateDeviceExtensionProperties, pd, nullptr);
     auto supportsExt = [&](const char* name) {
         return std::any_of(supportedExtensions.begin(), supportedExtensions.end(), [&](const auto& ext) {
@@ -954,20 +1074,28 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     auto& qSync2 = queryChain.add(VkPhysicalDeviceSynchronization2Features{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES,
     });
-    
+
     // Provided by VK_VERSION_1_2
     auto& qFloat16Int8 = queryChain.add(VkPhysicalDeviceShaderFloat16Int8Features{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES,
     });
-    
+
     // Provided by VK_VERSION_1_1
     auto& q16BitStorage = queryChain.add(VkPhysicalDevice16BitStorageFeatures{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES,
     });
-    
+
     // Provided by VK_VERSION_1_2
     auto& qHostReset = queryChain.add(VkPhysicalDeviceHostQueryResetFeatures{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES,
+    });
+
+    auto& qMaintenance4 = queryChain.add(VkPhysicalDeviceMaintenance4Features{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES,
+    });
+
+    auto& qBDA = queryChain.add(VkPhysicalDeviceBufferDeviceAddressFeatures{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
     });
 
     // Provided by VK_EXT_shader_atomic_float
@@ -988,6 +1116,24 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT,
         });
 
+    auto* qPipelineExecutableInfo =
+        !settings.enablePipelineExecutableInfo ||
+        !supportsExt(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME)
+            ? nullptr
+            : &queryChain.add(VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR,
+            });
+
+#ifdef VK_KHR_PIPELINE_BINARY_EXTENSION_NAME
+    auto* qPipelineBinary =
+        !settings.enablePipelineBinaryCapture ||
+        !supportsExt(VK_KHR_PIPELINE_BINARY_EXTENSION_NAME)
+            ? nullptr
+            : &queryChain.add(VkPhysicalDevicePipelineBinaryFeaturesKHR{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_BINARY_FEATURES_KHR,
+            });
+#endif
+
 #ifdef EVA_ENABLE_PERFORMANCE_QUERY
     // Provided by VK_KHR_performance_query
     auto* qPerfQuery = !supportsExt(VK_KHR_PERFORMANCE_QUERY_EXTENSION_NAME)
@@ -997,16 +1143,10 @@ Device Runtime::createDevice(const DeviceSettings& settings)
 #endif
 
 #ifdef EVA_ENABLE_RAYTRACING
-    VkPhysicalDeviceBufferDeviceAddressFeatures* qBDA = nullptr;
     VkPhysicalDeviceAccelerationStructureFeaturesKHR* qAccelStruct = nullptr;
     VkPhysicalDeviceRayTracingPipelineFeaturesKHR* qRtPipeline = nullptr;
     if (settings.enableRaytracing)
     {
-        // Provided by VK_VERSION_1_2
-        qBDA = !supportsExt(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME)
-            ? nullptr : &queryChain.add(VkPhysicalDeviceBufferDeviceAddressFeatures{
-                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
-            });
         // Provided by VK_KHR_acceleration_structure
         qAccelStruct = !supportsExt(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME)
             ? nullptr : &queryChain.add(VkPhysicalDeviceAccelerationStructureFeaturesKHR{
@@ -1129,6 +1269,59 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         enabledFeatures.hostQueryReset = true;
     }
 
+    if (!qMaintenance4.maintenance4)
+    {
+        throw std::runtime_error("The selected physical device does not support maintenance4 (required by LocalSizeId shaders).");
+    }
+    chain.add(VkPhysicalDeviceMaintenance4Features{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES,
+        .maintenance4 = VK_TRUE,
+    });
+
+    if (!qBDA.bufferDeviceAddress)
+    {
+        throw std::runtime_error("The selected physical device does not support bufferDeviceAddress, which is required by the runtime.");
+    }
+    chain.add(VkPhysicalDeviceBufferDeviceAddressFeatures{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
+        .bufferDeviceAddress = VK_TRUE,
+    });
+    enabledFeatures.bufferDeviceAddress = true;
+
+    if (qPipelineExecutableInfo && qPipelineExecutableInfo->pipelineExecutableInfo)
+    {
+        reqExtentions.push_back(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);
+        chain.add(VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR,
+            .pipelineExecutableInfo = VK_TRUE,
+        });
+        printf("[EVA] VK_KHR_pipeline_executable_properties enabled\n");
+    }
+    else if (settings.enablePipelineExecutableInfo)
+    {
+        printf("[EVA] VK_KHR_pipeline_executable_properties is not supported on this device. SASS dump disabled.\n");
+    }
+
+#ifdef VK_KHR_PIPELINE_BINARY_EXTENSION_NAME
+    if (qPipelineBinary && qPipelineBinary->pipelineBinaries)
+    {
+        reqExtentions.push_back(VK_KHR_PIPELINE_BINARY_EXTENSION_NAME);
+        chain.add(VkPhysicalDevicePipelineBinaryFeaturesKHR{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_BINARY_FEATURES_KHR,
+            .pipelineBinaries = VK_TRUE,
+        });
+        enabledFeatures.pipelineBinaries = true;
+        printf("[EVA] VK_KHR_pipeline_binary enabled\n");
+    }
+    else if (settings.enablePipelineBinaryCapture)
+    {
+        printf("[EVA] VK_KHR_pipeline_binary is not supported on this device. Pipeline binary capture disabled.\n");
+    }
+#else
+    if (settings.enablePipelineBinaryCapture)
+        printf("[EVA] VK_KHR_pipeline_binary is unavailable in current Vulkan headers. Pipeline binary capture disabled.\n");
+#endif
+
 #ifdef EVA_ENABLE_PERFORMANCE_QUERY
     // Provided by VK_KHR_performance_query
     if (qPerfQuery)
@@ -1149,20 +1342,11 @@ Device Runtime::createDevice(const DeviceSettings& settings)
 #ifdef EVA_ENABLE_RAYTRACING
     if (settings.enableRaytracing)
     {
-        // Provided by VK_VERSION_1_2
-        if (qBDA)
+        if (!supportsExt(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME))
         {
-            reqExtentions.push_back(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
-
-            if (qBDA->bufferDeviceAddress)
-            {
-                chain.add(VkPhysicalDeviceBufferDeviceAddressFeatures{
-                    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
-                    .bufferDeviceAddress = VK_TRUE,
-                });
-                enabledFeatures.bufferDeviceAddress = true;
-            }
+            throw std::runtime_error("The selected physical device does not support VK_KHR_buffer_device_address required by raytracing.");
         }
+        reqExtentions.push_back(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
 
         // Provided by VK_KHR_acceleration_structure
         if (qAccelStruct)
@@ -1199,57 +1383,143 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     }
 #endif
 
-    bool cooperativeMatrixSupported = false;
-    bool cooperativeMatrix2Supported = false;
+    // VK_KHR_cooperative_matrix for Tensor Core GEMM
+    // VK_NV_cooperative_matrix2 for tensor operations (llama.cpp style)
+    bool cooperative_matrix_supported = false;
+    bool coopmat2_supported = false;
     if (settings.enableCooperativeMatrix)
     {
 #ifdef VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME
         if (supportsExt(VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME))
         {
             reqExtentions.push_back(VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);
-            cooperativeMatrixSupported = true;
+            cooperative_matrix_supported = true;
         }
         else
         {
             printf("[EVA] VK_KHR_cooperative_matrix is not supported on this device. Cooperative matrix disabled.\n");
         }
 #else
-        printf("[EVA] VK_KHR_cooperative_matrix is not available in this Vulkan SDK. Cooperative matrix disabled.\n");
+        printf("[EVA] VK_KHR_cooperative_matrix is not available in this Vulkan SDK/headers. Cooperative matrix disabled.\n");
 #endif
 
-        const bool cooperativeMatrix2ExtensionAvailable = supportsExt("VK_NV_cooperative_matrix2");
+        // Check if VK_NV_cooperative_matrix2 extension is available
+        bool coopmat2_ext_available = supportsExt("VK_NV_cooperative_matrix2");
+
 #ifdef VK_NV_COOPERATIVE_MATRIX_2_SPEC_VERSION
-        if (cooperativeMatrix2ExtensionAvailable)
+        if (coopmat2_ext_available)
         {
-            VkPhysicalDeviceCooperativeMatrix2FeaturesNV features{};
-            features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_2_FEATURES_NV;
+            // Query coopmat2 features (llama.cpp style)
+            VkPhysicalDeviceCooperativeMatrix2FeaturesNV coopmat2_features{};
+            coopmat2_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_2_FEATURES_NV;
+            coopmat2_features.pNext = nullptr;
 
             VkPhysicalDeviceFeatures2 features2{};
             features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-            features2.pNext = &features;
+            features2.pNext = &coopmat2_features;
             vkGetPhysicalDeviceFeatures2(pd, &features2);
 
-            if (features.cooperativeMatrixWorkgroupScope &&
-                features.cooperativeMatrixFlexibleDimensions &&
-                features.cooperativeMatrixReductions &&
-                features.cooperativeMatrixConversions &&
-                features.cooperativeMatrixPerElementOperations &&
-                features.cooperativeMatrixTensorAddressing &&
-                features.cooperativeMatrixBlockLoads)
+            // Check all required features (llama.cpp checks these)
+            if (coopmat2_features.cooperativeMatrixWorkgroupScope &&
+                coopmat2_features.cooperativeMatrixFlexibleDimensions &&
+                coopmat2_features.cooperativeMatrixReductions &&
+                coopmat2_features.cooperativeMatrixConversions &&
+                coopmat2_features.cooperativeMatrixPerElementOperations &&
+                coopmat2_features.cooperativeMatrixTensorAddressing &&
+                coopmat2_features.cooperativeMatrixBlockLoads)
             {
                 reqExtentions.push_back("VK_NV_cooperative_matrix2");
-                cooperativeMatrix2Supported = true;
-                printf("[EVA] VK_NV_cooperative_matrix2 enabled.\n");
+                coopmat2_supported = true;
+                printf("[EVA] VK_NV_cooperative_matrix2 enabled (all features supported)\n");
             }
             else
             {
-                printf("[EVA] VK_NV_cooperative_matrix2 is available but required features are incomplete.\n");
+                printf("[EVA] VK_NV_cooperative_matrix2 available but missing features:\n");
+                printf("  WorkgroupScope=%d FlexibleDims=%d Reductions=%d Conversions=%d\n",
+                    coopmat2_features.cooperativeMatrixWorkgroupScope,
+                    coopmat2_features.cooperativeMatrixFlexibleDimensions,
+                    coopmat2_features.cooperativeMatrixReductions,
+                    coopmat2_features.cooperativeMatrixConversions);
+                printf("  PerElementOps=%d TensorAddr=%d BlockLoads=%d\n",
+                    coopmat2_features.cooperativeMatrixPerElementOperations,
+                    coopmat2_features.cooperativeMatrixTensorAddressing,
+                    coopmat2_features.cooperativeMatrixBlockLoads);
             }
         }
 #else
-        if (cooperativeMatrix2ExtensionAvailable)
-            printf("[EVA] VK_NV_cooperative_matrix2 is present, but this Vulkan SDK has no feature structs. coopmat2 disabled.\n");
+        if (coopmat2_ext_available)
+        {
+            printf("[EVA] VK_NV_cooperative_matrix2 extension is present but feature structs are unavailable in current Vulkan headers. coopmat2 disabled.\n");
+        }
 #endif
+    }
+
+    // VK_NV_cuda_kernel_launch for CUDA PTX kernels in Vulkan command buffers
+    bool cuda_kernel_launch_supported = false;
+    if (settings.enableCudaKernelLaunch)
+    {
+        // Check if extension is available
+        bool cuda_ext_available = supportsExt("VK_NV_cuda_kernel_launch");
+
+        if (cuda_ext_available)
+        {
+            // Query feature support
+            // Define struct manually to avoid vulkan_beta.h dependency
+            struct VkPhysicalDeviceCudaKernelLaunchFeaturesNV_t {
+                VkStructureType sType;
+                void* pNext;
+                VkBool32 cudaKernelLaunchFeatures;
+            };
+            // VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUDA_KERNEL_LAUNCH_FEATURES_NV = 1000307003
+            VkPhysicalDeviceCudaKernelLaunchFeaturesNV_t cuda_features{};
+            cuda_features.sType = (VkStructureType)1000307003;
+            cuda_features.pNext = nullptr;
+
+            VkPhysicalDeviceFeatures2 features2_cuda{};
+            features2_cuda.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            features2_cuda.pNext = &cuda_features;
+            vkGetPhysicalDeviceFeatures2(pd, &features2_cuda);
+
+            if (cuda_features.cudaKernelLaunchFeatures)
+            {
+                reqExtentions.push_back("VK_NV_cuda_kernel_launch");
+                cuda_kernel_launch_supported = true;
+                printf("[EVA] VK_NV_cuda_kernel_launch enabled (cudaKernelLaunchFeatures supported)\n");
+            }
+            else
+            {
+                printf("[EVA] VK_NV_cuda_kernel_launch available but cudaKernelLaunchFeatures not supported\n");
+            }
+        }
+        else
+        {
+            printf("[EVA] VK_NV_cuda_kernel_launch not available on this device\n");
+        }
+    }
+
+    if (settings.enableExternalMemoryWin32)
+    {
+        if (supportsExt("VK_KHR_external_memory_win32"))
+        {
+            reqExtentions.push_back("VK_KHR_external_memory_win32");
+            printf("[EVA] VK_KHR_external_memory_win32 enabled\n");
+        }
+        else
+        {
+            printf("[EVA] VK_KHR_external_memory_win32 not available on this device\n");
+        }
+    }
+    if (settings.enableExternalSemaphoreWin32)
+    {
+        if (supportsExt("VK_KHR_external_semaphore_win32"))
+        {
+            reqExtentions.push_back("VK_KHR_external_semaphore_win32");
+            printf("[EVA] VK_KHR_external_semaphore_win32 enabled\n");
+        }
+        else
+        {
+            printf("[EVA] VK_KHR_external_semaphore_win32 not available on this device\n");
+        }
     }
 
     std::vector<uint32_t> qfIndices[queue_max];
@@ -1386,17 +1656,18 @@ Device Runtime::createDevice(const DeviceSettings& settings)
 
         priorities[qfIndex].resize(qfProps[qfIndex].queueCount, 0.5f);
 
-        queueFamilyInfos.emplace_back(
-            VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-            nullptr,
-            VkDeviceQueueCreateFlags(0),
-            qfIndex,
-            qfProps[qfIndex].queueCount,
-            priorities[qfIndex].data()     // TODO: Set queue priorities (How to set accross different types but same family?)
-        );
+        queueFamilyInfos.push_back(VkDeviceQueueCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = VkDeviceQueueCreateFlags(0),
+            .queueFamilyIndex = qfIndex,
+            .queueCount = qfProps[qfIndex].queueCount,
+            .pQueuePriorities = priorities[qfIndex].data()     // TODO: Set queue priorities (How to set accross different types but same family?)
+        }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
     }
 
-    if (settings.enableCooperativeMatrix && cooperativeMatrixSupported)
+    // VK_KHR_cooperative_matrix for Tensor Core GEMM
+    if (settings.enableCooperativeMatrix && cooperative_matrix_supported)
     {
 #ifdef VK_KHR_cooperative_matrix
         chain.add(VkPhysicalDeviceCooperativeMatrixFeaturesKHR{
@@ -1404,10 +1675,12 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             .cooperativeMatrix = VK_TRUE,
         });
 #else
-        printf("[EVA] VkPhysicalDeviceCooperativeMatrixFeaturesKHR is unavailable. Cooperative matrix disabled.\n");
+        printf("[EVA] VkPhysicalDeviceCooperativeMatrixFeaturesKHR is unavailable in current Vulkan headers. Cooperative matrix disabled.\n");
 #endif
 
-        if (cooperativeMatrix2Supported)
+        // VK_NV_cooperative_matrix2 for tensor operations (coopMatLoadTensorNV etc.)
+        // Enable all features if supported (detected in extension query phase)
+        if (coopmat2_supported)
         {
 #ifdef VK_NV_COOPERATIVE_MATRIX_2_SPEC_VERSION
             chain.add(VkPhysicalDeviceCooperativeMatrix2FeaturesNV{
@@ -1420,8 +1693,31 @@ Device Runtime::createDevice(const DeviceSettings& settings)
                 .cooperativeMatrixTensorAddressing = VK_TRUE,
                 .cooperativeMatrixBlockLoads = VK_TRUE,
             });
+
+            // Set global flag for runtime query
+            eva::gCoopMat2Supported = true;
+#else
+            printf("[EVA] coopmat2 features are unavailable in current Vulkan headers. coopmat2 disabled.\n");
 #endif
         }
+    }
+
+    // VK_NV_cuda_kernel_launch for CUDA PTX kernels
+    if (cuda_kernel_launch_supported)
+    {
+        // VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUDA_KERNEL_LAUNCH_FEATURES_NV = 1000307003
+        struct CudaKernelLaunchFeatures {
+            VkStructureType sType;
+            void* pNext;
+            VkBool32 cudaKernelLaunchFeatures;
+        };
+        CudaKernelLaunchFeatures cuda_feat{};
+        cuda_feat.sType = (VkStructureType)1000307003;
+        cuda_feat.pNext = nullptr;
+        cuda_feat.cudaKernelLaunchFeatures = VK_TRUE;
+        chain.add(cuda_feat);
+
+        eva::gCudaKernelLaunchSupported = true;
     }
 
     VkDeviceCreateInfo deviceCreateInfo{
@@ -1434,6 +1730,11 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     };
     
     VkDevice vkDevice = create<VkDevice>(pd, deviceCreateInfo);
+
+#ifdef EVA_ENABLE_NSIGHT_DEBUG_LABELS
+    vkSetDebugUtilsObjectNameEXT_ = (PFN_vkSetDebugUtilsObjectNameEXT)
+        vkGetDeviceProcAddr(vkDevice, "vkSetDebugUtilsObjectNameEXT");
+#endif
     
     std::vector<std::vector<Queue>> queues(qfProps.size());
     for (auto qfIndex : uniqueQfIndices) 
@@ -1447,6 +1748,15 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         {
             VkQueue vkQueue;
             vkGetDeviceQueue(vkDevice, qfIndex, j, &vkQueue);
+#ifdef EVA_ENABLE_NSIGHT_DEBUG_LABELS
+            const std::string queueName =
+                "eva.queue.family" + std::to_string(qfIndex) + ".index" + std::to_string(j);
+            setDebugObjectName(
+                vkDevice,
+                VK_OBJECT_TYPE_QUEUE,
+                debugObjectHandle(vkQueue),
+                queueName.c_str());
+#endif
             auto pImpl = new Queue::Impl(
                 vkQueue,
                 qfIndex,
@@ -1457,11 +1767,53 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         }
     }
 
+    // Populate DeviceCapabilities
+    DeviceCapabilities caps;
+    {
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(pd, &props);
+
+        caps.deviceName = props.deviceName;
+        caps.isDiscreteGpu = (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU);
+        caps.maxWorkgroupSize[0] = props.limits.maxComputeWorkGroupSize[0];
+        caps.maxWorkgroupSize[1] = props.limits.maxComputeWorkGroupSize[1];
+        caps.maxWorkgroupSize[2] = props.limits.maxComputeWorkGroupSize[2];
+        caps.maxWorkgroupInvocations = props.limits.maxComputeWorkGroupInvocations;
+        caps.maxSharedMemorySize = props.limits.maxComputeSharedMemorySize;
+
+        // Subgroup properties
+        VkPhysicalDeviceSubgroupProperties subgroupProps{};
+        subgroupProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
+        VkPhysicalDeviceProperties2 props2{};
+        props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        props2.pNext = &subgroupProps;
+        vkGetPhysicalDeviceProperties2(pd, &props2);
+
+        caps.subgroupSize = subgroupProps.subgroupSize;
+        caps.subgroupOperations = subgroupProps.supportedOperations;
+
+        // Optional features
+        caps.supportsAtomicFloat = enabledFeatures.shaderBufferFloat32AtomicAdd;
+        caps.supportsAtomicFloatShared = false;  // TODO: query if needed
+
+        // Device local memory
+        VkPhysicalDeviceMemoryProperties memProps;
+        vkGetPhysicalDeviceMemoryProperties(pd, &memProps);
+        caps.deviceLocalMemorySize = 0;
+        for (uint32_t i = 0; i < memProps.memoryHeapCount; i++) {
+            if (memProps.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+                caps.deviceLocalMemorySize = memProps.memoryHeaps[i].size;
+                break;
+            }
+        }
+    }
+
     auto pImpl = new Device::Impl(
         pd,
         vkDevice,
         *this,
         settings,
+        caps,
         qfIndex[queue_graphics],
         qfIndex[queue_compute],
         qfIndex[queue_transfer],
@@ -1509,6 +1861,38 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         pImpl->rtProps.minAccelerationStructureScratchOffsetAlignment = accelStructProps.minAccelerationStructureScratchOffsetAlignment;
     }
 #endif
+
+    // @chay116 - Load vkGetBufferDeviceAddress (always, BDA used by all GEMM paths)
+    // Note: In Vulkan 1.2+, bufferDeviceAddress is a core feature (no KHR suffix)
+    if (vkGetBufferDeviceAddressKHR_ == nullptr)
+    {
+        // Try core Vulkan 1.2 version first
+        vkGetBufferDeviceAddressKHR_ = (PFN_vkGetBufferDeviceAddressKHR)vkGetDeviceProcAddr(vkDevice, "vkGetBufferDeviceAddress");
+        // Fallback to KHR version if core not available
+        if (vkGetBufferDeviceAddressKHR_ == nullptr)
+            vkGetBufferDeviceAddressKHR_ = (PFN_vkGetBufferDeviceAddressKHR)vkGetDeviceProcAddr(vkDevice, "vkGetBufferDeviceAddressKHR");
+
+        if (vkGetBufferDeviceAddressKHR_)
+            printf("[EVA] vkGetBufferDeviceAddress loaded successfully!\n");
+        else
+            printf("[EVA] ERROR: Failed to load vkGetBufferDeviceAddress!\n");
+    }
+
+    // Load pipeline executable properties function pointers
+    if (qPipelineExecutableInfo && qPipelineExecutableInfo->pipelineExecutableInfo)
+    {
+        vkGetPipelineExecutablePropertiesKHR_ = (PFN_vkGetPipelineExecutablePropertiesKHR)
+            vkGetDeviceProcAddr(vkDevice, "vkGetPipelineExecutablePropertiesKHR");
+        vkGetPipelineExecutableInternalRepresentationsKHR_ = (PFN_vkGetPipelineExecutableInternalRepresentationsKHR)
+            vkGetDeviceProcAddr(vkDevice, "vkGetPipelineExecutableInternalRepresentationsKHR");
+        vkGetPipelineExecutableStatisticsKHR_ = (PFN_vkGetPipelineExecutableStatisticsKHR)
+            vkGetDeviceProcAddr(vkDevice, "vkGetPipelineExecutableStatisticsKHR");
+
+        if (vkGetPipelineExecutablePropertiesKHR_ && vkGetPipelineExecutableInternalRepresentationsKHR_)
+            printf("[EVA] Pipeline executable properties loaded (SASS dump available)\n");
+        else
+            printf("[EVA] ERROR: Failed to load pipeline executable properties functions!\n");
+    }
 
 #ifdef EVA_ENABLE_PERFORMANCE_QUERY
     // VK_KHR_performance_query function pointers
@@ -1579,6 +1963,16 @@ Device::Impl::~Impl()
     vkDestroyDevice(vkDevice, nullptr);
 }
 
+void* Device::nativeDevice() const { return impl().vkDevice; }
+void* Device::nativePhysicalDevice() const { return impl().vkPhysicalDevice; }
+bool Device::hasShaderAtomicFloat() const
+{
+    auto deviceExtensions = arrayFrom(vkEnumerateDeviceExtensionProperties, impl().vkPhysicalDevice, nullptr);
+    return std::any_of(deviceExtensions.begin(), deviceExtensions.end(), [](const auto& props) {
+        return strcmp(props.extensionName, VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME) == 0;
+    });
+}
+
 void Device::reportGPUQueueFamilies() const
 {
     auto qfProps = arrayFrom(vkGetPhysicalDeviceQueueFamilyProperties, impl().vkPhysicalDevice);  
@@ -1606,6 +2000,11 @@ void Device::reportAssignedQueues() const
     printf("***Transfer Queues***\n");
     reportQfs(impl().queues[impl().qfIndex[queue_transfer]]);
     fflush(stdout);
+}
+
+const DeviceCapabilities& Device::capabilities() const
+{
+    return impl().capabilities;
 }
 
 uint32_t Device::queueCount(QueueType type) const 
@@ -1745,16 +2144,16 @@ Queue Queue::submit(std::vector<SubmissionBatchInfo>&& batches, std::optional<Fe
         info.waitSemaphoreInfoCount = (uint32_t) inWaitSems.size();
         info.pWaitSemaphoreInfos = waitSems.data() + waitSemOffset;
 
-        for (auto& inWaitSem : inWaitSems) 
+        for (auto& inWaitSem : inWaitSems)
         {
-            waitSems.emplace_back(
-                VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-                nullptr,
-                inWaitSem.sem.impl().vkSemaphore,
-                0,
-                (VkPipelineStageFlags2)(uint64_t)inWaitSem.stage,
-                0
-            );
+            waitSems.push_back(VkSemaphoreSubmitInfo{
+                .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+                .pNext = nullptr,
+                .semaphore = inWaitSem.sem.impl().vkSemaphore,
+                .value = 0,
+                .stageMask = (VkPipelineStageFlags2)(uint64_t)inWaitSem.stage,
+                .deviceIndex = 0
+            }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
         }
         waitSemOffset += info.waitSemaphoreInfoCount;
 
@@ -1765,27 +2164,27 @@ Queue Queue::submit(std::vector<SubmissionBatchInfo>&& batches, std::optional<Fe
             // EVA_ASSERT(inCmdBuffer.queueFamilyIndex() == impl().qfIndex); // VUID-vkQueueSubmit2-pCommandBuffers-00074
             EVA_ASSERT(_type == inCmdBuffer.type()); // VUID-vkQueueSubmit2-pCommandBuffers-00074
             inCmdBuffer.impl().lastSubmittedQueue = *this;
-            cmdBuffers.emplace_back(
-                VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
-                nullptr,
-                inCmdBuffer.impl().vkCmdBuffer,
-                0
-            );
+            cmdBuffers.push_back(VkCommandBufferSubmitInfo{
+                .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+                .pNext = nullptr,
+                .commandBuffer = inCmdBuffer.impl().vkCmdBuffer,
+                .deviceMask = 0
+            }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
         }
         cmdBufferOffset += info.commandBufferInfoCount;
 
         info.signalSemaphoreInfoCount = (uint32_t) inSignalSems.size();
         info.pSignalSemaphoreInfos = signalSems.data() + signalSemOffset;
-        for (auto& inSignalSem : inSignalSems) 
+        for (auto& inSignalSem : inSignalSems)
         {
-            signalSems.emplace_back(
-                VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-                nullptr,
-                inSignalSem.sem.impl().vkSemaphore,
-                0,
-                (VkPipelineStageFlags2)(uint64_t)inSignalSem.stage,
-                0
-            );
+            signalSems.push_back(VkSemaphoreSubmitInfo{
+                .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+                .pNext = nullptr,
+                .semaphore = inSignalSem.sem.impl().vkSemaphore,
+                .value = 0,
+                .stageMask = (VkPipelineStageFlags2)(uint64_t)inSignalSem.stage,
+                .deviceIndex = 0
+            }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
         }
         signalSemOffset += info.signalSemaphoreInfoCount;
     }
@@ -1920,6 +2319,8 @@ CommandBuffer CommandPool::newCommandBuffer()
 /////////////////////////////////////////////////////////////////////////////////////////
 // CommandBuffer
 /////////////////////////////////////////////////////////////////////////////////////////
+void* CommandBuffer::nativeCommandBuffer() const { return impl().vkCmdBuffer; }
+
 QueueType CommandBuffer::type() const
 {
     return impl().type;
@@ -2006,7 +2407,7 @@ CommandBuffer CommandBuffer::bindDescSets(
     std::vector<VkDescriptorSet> vkDescSets(descSets.size());
     for (uint32_t i = 0; i < descSets.size(); ++i)
     {
-        EVA_ASSERT(descSets[i] || impl().device.impl().features.graphicsPipelineLibrary); 
+        EVA_ASSERT(descSets[i] || impl().device.impl().features.graphicsPipelineLibrary);
         vkDescSets[i] = descSets[i] ? descSets[i].impl().vkDescSet : VK_NULL_HANDLE;
     }
 
@@ -2025,7 +2426,7 @@ CommandBuffer CommandBuffer::bindDescSets(
     std::vector<VkDescriptorSet> vkDescSets(descSets.size());
     for (uint32_t i = 0; i < descSets.size(); ++i)
     {
-        EVA_ASSERT(descSets[i] || impl().device.impl().features.graphicsPipelineLibrary); 
+        EVA_ASSERT(descSets[i] || impl().device.impl().features.graphicsPipelineLibrary);
         vkDescSets[i] = descSets[i] ? descSets[i].impl().vkDescSet : VK_NULL_HANDLE;
     }
 
@@ -2143,32 +2544,32 @@ CommandBuffer CommandBuffer::barrier(
                 else EVA_ASSERT(barrier.opType == OwnershipTransferOpType::none);
             }
             
-            if constexpr (std::is_same_v<T, MemoryBarrier>) 
+            if constexpr (std::is_same_v<T, MemoryBarrier>)
             {
-                memoryBarriers.emplace_back(
-                    VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-                    nullptr,
-                    (VkPipelineStageFlags2) barrier.srcMask.scope.stage,
-                    (VkAccessFlags2) barrier.srcMask.scope.access,
-                    (VkPipelineStageFlags2) barrier.dstMask.scope.stage,
-                    (VkAccessFlags2) barrier.dstMask.scope.access
-                );
+                memoryBarriers.push_back(VkMemoryBarrier2{
+                    .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                    .pNext = nullptr,
+                    .srcStageMask = (VkPipelineStageFlags2) barrier.srcMask.scope.stage,
+                    .srcAccessMask = (VkAccessFlags2) barrier.srcMask.scope.access,
+                    .dstStageMask = (VkPipelineStageFlags2) barrier.dstMask.scope.stage,
+                    .dstAccessMask = (VkAccessFlags2) barrier.dstMask.scope.access
+                }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
             }
-            else if constexpr (std::is_same_v<T, BufferMemoryBarrier>) 
+            else if constexpr (std::is_same_v<T, BufferMemoryBarrier>)
             {
-                bufferBarriers.emplace_back(
-                    VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-                    nullptr,
-                    (VkPipelineStageFlags2) barrier.srcMask.scope.stage,
-                    (VkAccessFlags2) barrier.srcMask.scope.access,
-                    (VkPipelineStageFlags2) barrier.dstMask.scope.stage,
-                    (VkAccessFlags2) barrier.dstMask.scope.access,
-                    srcQueueFamilyIndex,
-                    dstQueueFamilyIndex,
-                    barrier.buffer.buffer.impl().vkBuffer,
-                    barrier.buffer.offset, 
-                    barrier.buffer.size
-                );
+                bufferBarriers.push_back(VkBufferMemoryBarrier2{
+                    .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                    .pNext = nullptr,
+                    .srcStageMask = (VkPipelineStageFlags2) barrier.srcMask.scope.stage,
+                    .srcAccessMask = (VkAccessFlags2) barrier.srcMask.scope.access,
+                    .dstStageMask = (VkPipelineStageFlags2) barrier.dstMask.scope.stage,
+                    .dstAccessMask = (VkAccessFlags2) barrier.dstMask.scope.access,
+                    .srcQueueFamilyIndex = srcQueueFamilyIndex,
+                    .dstQueueFamilyIndex = dstQueueFamilyIndex,
+                    .buffer = barrier.buffer.buffer.impl().vkBuffer,
+                    .offset = barrier.buffer.offset,
+                    .size = barrier.buffer.size
+                }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
             }
             else if constexpr (std::is_same_v<T, ImageMemoryBarrier>) 
             {
@@ -2213,26 +2614,24 @@ CommandBuffer CommandBuffer::barrier(
                     }
                 }
 
-                imageBarriers.emplace_back(
-                    VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                    nullptr,
-                    (VkPipelineStageFlags2) barrier.srcMask.scope.stage,
-                    (VkAccessFlags2) barrier.srcMask.scope.access,
-                    (VkPipelineStageFlags2) barrier.dstMask.scope.stage,
-                    (VkAccessFlags2) barrier.dstMask.scope.access,
-                    (VkImageLayout)(uint32_t) barrier.oldLayout,
-                    (VkImageLayout)(uint32_t) barrier.newLayout,
-                    // (VkImageLayout)(uint32_t) barrier.image.impl().currentLayout,
-                    // (VkImageLayout)(uint32_t) (barrier.newLayout == IMAGE_LAYOUT::UNDEFINED ? barrier.image.impl().currentLayout : barrier.newLayout),
-                    srcQueueFamilyIndex,
-                    dstQueueFamilyIndex,
-                    barrier.image.impl().vkImage,
-                    VkImageSubresourceRange{
+                imageBarriers.push_back(VkImageMemoryBarrier2{
+                    .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                    .pNext = nullptr,
+                    .srcStageMask = (VkPipelineStageFlags2) barrier.srcMask.scope.stage,
+                    .srcAccessMask = (VkAccessFlags2) barrier.srcMask.scope.access,
+                    .dstStageMask = (VkPipelineStageFlags2) barrier.dstMask.scope.stage,
+                    .dstAccessMask = (VkAccessFlags2) barrier.dstMask.scope.access,
+                    .oldLayout = (VkImageLayout)(uint32_t) barrier.oldLayout,
+                    .newLayout = (VkImageLayout)(uint32_t) barrier.newLayout,
+                    .srcQueueFamilyIndex = srcQueueFamilyIndex,
+                    .dstQueueFamilyIndex = dstQueueFamilyIndex,
+                    .image = barrier.image.impl().vkImage,
+                    .subresourceRange = VkImageSubresourceRange{
                         .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,    // TODO: support depth/stencil
                         .levelCount = VK_REMAINING_MIP_LEVELS,      // TODO: support level control
                         .layerCount = VK_REMAINING_ARRAY_LAYERS,    // TODO: support layer control
                     }
-                );
+                }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
 
                 // barrier.image.impl().currentLayout = barrier.newLayout; // update current layout
             }
@@ -2284,31 +2683,31 @@ CommandBuffer CommandBuffer::barrier(
                 else EVA_ASSERT(barrier.opType == OwnershipTransferOpType::none);
             }
             
-            if constexpr (std::is_same_v<T, MemoryBarrier>) 
+            if constexpr (std::is_same_v<T, MemoryBarrier>)
             {
                 srcStageMask |= (VkPipelineStageFlags) barrier.srcMask.stage;
                 dstStageMask |= (VkPipelineStageFlags) barrier.dstMask.stage;
-                memoryBarriers.emplace_back(
-                    VK_STRUCTURE_TYPE_MEMORY_BARRIER,
-                    nullptr,
-                    (VkAccessFlags) barrier.srcMask.access,
-                    (VkAccessFlags) barrier.dstMask.access
-                );
+                memoryBarriers.push_back(VkMemoryBarrier{
+                    .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                    .pNext = nullptr,
+                    .srcAccessMask = (VkAccessFlags) barrier.srcMask.access,
+                    .dstAccessMask = (VkAccessFlags) barrier.dstMask.access
+                }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
             }
             else if constexpr (std::is_same_v<T, BufferMemoryBarrier>) {
                 srcStageMask |= (VkPipelineStageFlags) barrier.srcMask.stage;
                 dstStageMask |= (VkPipelineStageFlags) barrier.dstMask.stage;
-                bufferBarriers.emplace_back(
-                    VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-                    nullptr,
-                    (VkAccessFlags) barrier.srcMask.access,
-                    (VkAccessFlags) barrier.dstMask.access,
-                    srcQueueFamilyIndex,
-                    dstQueueFamilyIndex,
-                    barrier.buffer.impl().vkBuffer,
-                    barrier.offset, 
-                    barrier.size
-                );
+                bufferBarriers.push_back(VkBufferMemoryBarrier{
+                    .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                    .pNext = nullptr,
+                    .srcAccessMask = (VkAccessFlags) barrier.srcMask.access,
+                    .dstAccessMask = (VkAccessFlags) barrier.dstMask.access,
+                    .srcQueueFamilyIndex = srcQueueFamilyIndex,
+                    .dstQueueFamilyIndex = dstQueueFamilyIndex,
+                    .buffer = barrier.buffer.impl().vkBuffer,
+                    .offset = barrier.offset,
+                    .size = barrier.size
+                }); // TODO: Linux Clang 호환성 - emplace_back → push_back + designated initializer
             }
             else if constexpr (std::is_same_v<T, ImageMemoryBarrier>) {
                 // TODO: Support image & image barrier
@@ -2370,9 +2769,37 @@ CommandBuffer CommandBuffer::copyBuffer(
 CommandBuffer CommandBuffer::copyBuffer(BufferRange src, BufferRange dst)
 {
     return copyBuffer(
-        src.buffer, dst.buffer, 
-        src.offset, dst.offset, 
+        src.buffer, dst.buffer,
+        src.offset, dst.offset,
         std::min(src.size, dst.size));
+}
+
+CommandBuffer CommandBuffer::fillBuffer(
+    Buffer dst,
+    uint32_t data,
+    uint64_t dstOffset,
+    uint64_t size)
+{
+    EVA_ASSERT((uint32_t)dst.impl().usage & VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    EVA_ASSERT(dstOffset < dst.size());
+
+    if (size == EVA_WHOLE_SIZE)
+        size = dst.size() - dstOffset;
+    else
+        EVA_ASSERT(dstOffset + size <= dst.size());
+
+    // vkCmdFillBuffer requires size to be a multiple of 4
+    EVA_ASSERT(size % 4 == 0);
+    EVA_ASSERT(dstOffset % 4 == 0);
+
+    vkCmdFillBuffer(
+        impl().vkCmdBuffer,
+        dst.impl().vkBuffer,
+        dstOffset,
+        size,
+        data);
+
+    return *this;
 }
 
 CommandBuffer CommandBuffer::copyImage(
@@ -2687,10 +3114,15 @@ bool Fence::isSignaled() const
 /////////////////////////////////////////////////////////////////////////////////////////
 // Semaphore
 /////////////////////////////////////////////////////////////////////////////////////////
-Semaphore Device::createSemaphore()
+Semaphore Device::createSemaphore(bool exportWin32)
 {
+    VkExportSemaphoreCreateInfo exportInfo{
+        .sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO,
+        .handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT,
+    };
     auto vkHandle = create<VkSemaphore>(impl().vkDevice, {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = exportWin32 ? &exportInfo : nullptr,
     });
 
     auto pImpl = new Semaphore::Impl(
@@ -2699,6 +3131,8 @@ Semaphore Device::createSemaphore()
 
     return *impl().semaphores.insert(new Semaphore::Impl*(pImpl)).first;
 }
+
+void* Semaphore::nativeSemaphore() const { return impl().vkSemaphore; }
 
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -2738,7 +3172,7 @@ PipelineLayoutDesc ShaderModule::extractPipelineLayoutDesc() const
     return ::extractPipelineLayoutDesc(impl().pModule);
 }
 
-inline ShaderModule::operator uint64_t() const
+ShaderModule::operator uint64_t() const
 {
     return (uint64_t) *ppImpl;
 }
@@ -2841,7 +3275,7 @@ uint64_t SpecializationConstant::hash() const noexcept
 }
 
 
-inline bool ShaderStage::operator==(const ShaderStage& other) const noexcept
+bool ShaderStage::operator==(const ShaderStage& other) const noexcept
 {
     if (!shader.has_value() && !other.shader.has_value())
         return true;
@@ -2862,45 +3296,45 @@ size_t std::hash<eva::ShaderStage>::operator()(const eva::ShaderStage& stage) co
 /////////////////////////////////////////////////////////////////////////////////////////
 ComputePipeline Device::createComputePipeline(const ComputePipelineCreateInfo& info)
 {
+    // Skip SPIRV-Reflect entirely if both layout AND workgroupSize are provided
+    // This is required for coopmat2 shaders which SPIRV-Reflect cannot parse
     const bool skipReflect = info.layout.has_value() && info.workgroupSize.has_value();
     const bool useReflect = !skipReflect;
 
     ShaderModule csModule;
     bool createTempModule = false;
 
-    if (auto* mod = std::get_if<ShaderModule>(&*info.csStage.shader)) 
+    if (auto* mod = std::get_if<ShaderModule>(&*info.csStage.shader))
     {
         csModule = *mod;
-    } 
+    }
     else
     {
-        csModule = createShaderModule({ 
-            .stage = SHADER_STAGE::COMPUTE, 
-            .spv = std::get<SpvBlob>(*info.csStage.shader), 
-            .withSpirvReflect = useReflect, 
+        csModule = createShaderModule({
+            .stage = SHADER_STAGE::COMPUTE,
+            .spv = std::get<SpvBlob>(*info.csStage.shader),
+            .withSpirvReflect = useReflect,
         });
         createTempModule = true;
     }
 
-    uint32_t sizeX = 1;
-    uint32_t sizeY = 1;
-    uint32_t sizeZ = 1;
+    uint32_t sizeX, sizeY, sizeZ;
     PipelineLayout layout;
-    if (skipReflect)
-    {
-        const auto& workgroupSize = info.workgroupSize.value();
-        sizeX = workgroupSize[0];
-        sizeY = workgroupSize[1];
-        sizeZ = workgroupSize[2];
+
+    if (skipReflect) {
+        // Use provided workgroup size and layout (coopmat2 path)
+        auto& wgSize = info.workgroupSize.value();
+        sizeX = wgSize[0];
+        sizeY = wgSize[1];
+        sizeZ = wgSize[2];
         layout = info.layout.value();
-    }
-    else
-    {
+    } else {
+        // Use SPIRV-Reflect for workgroup size and optionally layout
         EVA_ASSERT(csModule.hasReflect());
-        auto workgroupSize = extractWorkGroupSize(csModule.impl().pModule);
-        sizeX = workgroupSize[0];
-        sizeY = workgroupSize[1];
-        sizeZ = workgroupSize[2];
+        auto wgSize = extractWorkGroupSize(csModule.impl().pModule);
+        sizeX = wgSize[0];
+        sizeY = wgSize[1];
+        sizeZ = wgSize[2];
 
         if (info.layout.has_value())
         {
@@ -2922,7 +3356,7 @@ ComputePipeline Device::createComputePipeline(const ComputePipelineCreateInfo& i
     }
 
     const auto& spec = info.csStage.specialization;
-    
+
     VkPipelineShaderStageCreateInfo stageInfo = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .stage = (VkShaderStageFlagBits)(uint32_t) csModule.impl().stage,
@@ -2934,15 +3368,45 @@ ComputePipeline Device::createComputePipeline(const ComputePipelineCreateInfo& i
 
     VkComputePipelineCreateInfo createInfo{
         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .flags = (VkPipelineCreateFlags)(
+            vkGetPipelineExecutablePropertiesKHR_
+                ? (VK_PIPELINE_CREATE_CAPTURE_INTERNAL_REPRESENTATIONS_BIT_KHR
+                   | VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR)
+                : 0),
         .stage = stageInfo,
         .layout = layout.impl().vkPipeLayout,
     };
+
+#ifdef VK_KHR_PIPELINE_BINARY_EXTENSION_NAME
+    VkPipelineCreateFlags2CreateInfoKHR pipelineBinaryCaptureFlags{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO_KHR,
+        .flags =
+            (vkGetPipelineExecutablePropertiesKHR_
+                ? (VK_PIPELINE_CREATE_2_CAPTURE_INTERNAL_REPRESENTATIONS_BIT_KHR
+                   | VK_PIPELINE_CREATE_2_CAPTURE_STATISTICS_BIT_KHR)
+                : 0)
+            | VK_PIPELINE_CREATE_2_CAPTURE_DATA_BIT_KHR,
+    };
+    if (impl().features.pipelineBinaries)
+    {
+        createInfo.flags = 0;
+        createInfo.pNext = &pipelineBinaryCaptureFlags;
+    }
+#endif
 
     VkPipeline vkHandle;
     ASSERT_SUCCESS(vkCreateComputePipelines(
         impl().vkDevice, VK_NULL_HANDLE,
         1, &createInfo,
         nullptr, &vkHandle));
+
+#ifdef EVA_ENABLE_NSIGHT_DEBUG_LABELS
+    setDebugObjectName(
+        impl().vkDevice,
+        VK_OBJECT_TYPE_PIPELINE,
+        debugObjectHandle(vkHandle),
+        info.debugName.c_str());
+#endif
 
     auto pImpl = new ComputePipeline::Impl(
         impl().vkDevice,
@@ -2953,7 +3417,15 @@ ComputePipeline Device::createComputePipeline(const ComputePipelineCreateInfo& i
     if (createTempModule)
         csModule.destroy();
 
-    return *impl().computePipelines.insert(new ComputePipeline::Impl*(pImpl)).first;
+    auto ppImpl = *impl().computePipelines.insert(new ComputePipeline::Impl*(pImpl)).first;
+    ComputePipeline pipeline(ppImpl);
+
+#ifdef VK_KHR_PIPELINE_BINARY_EXTENSION_NAME
+    if (impl().features.pipelineBinaries)
+        dumpCapturedPipelineBinaryIfRequested(pipeline, info, sizeX, sizeY, sizeZ);
+#endif
+
+    return pipeline;
 }
 
 PipelineLayout ComputePipeline::layout() const
@@ -2964,6 +3436,205 @@ PipelineLayout ComputePipeline::layout() const
 DescriptorSetLayout ComputePipeline::descSetLayout(uint32_t setId) const
 {
     return impl().layout.descSetLayout(setId);
+}
+
+uint32_t ComputePipeline::pushConstantSize() const
+{
+    return impl().layout.pushConstantSize();
+}
+
+std::string ComputePipeline::executableStatisticsText(const char* label) const
+{
+    if (!vkGetPipelineExecutablePropertiesKHR_ || !vkGetPipelineExecutableStatisticsKHR_)
+        return {};
+
+    VkPipelineInfoKHR pipelineInfo{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INFO_KHR,
+        .pipeline = impl().vkPipeline,
+    };
+
+    uint32_t executableCount = 0;
+    if (vkGetPipelineExecutablePropertiesKHR_(impl().vkDevice, &pipelineInfo, &executableCount, nullptr) != VK_SUCCESS ||
+        executableCount == 0)
+    {
+        return {};
+    }
+
+    std::vector<VkPipelineExecutablePropertiesKHR> executableProps(
+        executableCount,
+        VkPipelineExecutablePropertiesKHR{.sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR});
+    if (vkGetPipelineExecutablePropertiesKHR_(impl().vkDevice, &pipelineInfo, &executableCount, executableProps.data()) != VK_SUCCESS)
+        return {};
+
+    std::ostringstream out;
+    for (uint32_t executableIndex = 0; executableIndex < executableCount; ++executableIndex)
+    {
+        VkPipelineExecutableInfoKHR executableInfo{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR,
+            .pipeline = impl().vkPipeline,
+            .executableIndex = executableIndex,
+        };
+
+        uint32_t statisticCount = 0;
+        if (vkGetPipelineExecutableStatisticsKHR_(impl().vkDevice, &executableInfo, &statisticCount, nullptr) != VK_SUCCESS)
+            continue;
+
+        std::vector<VkPipelineExecutableStatisticKHR> statistics(
+            statisticCount,
+            VkPipelineExecutableStatisticKHR{.sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_STATISTIC_KHR});
+        if (vkGetPipelineExecutableStatisticsKHR_(impl().vkDevice, &executableInfo, &statisticCount, statistics.data()) != VK_SUCCESS)
+            continue;
+
+        out << "VAI_PIPELINE_STATS";
+        if (label && *label)
+            out << " label=" << label;
+        out << " executable=" << executableIndex
+            << " name=\"" << executableProps[executableIndex].name << "\""
+            << " description=\"" << executableProps[executableIndex].description << "\"\n";
+
+        for (const auto& stat : statistics)
+        {
+            out << "  " << stat.name << ": ";
+            switch (stat.format)
+            {
+            case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_BOOL32_KHR:
+                out << (stat.value.b32 ? "true" : "false");
+                break;
+            case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_INT64_KHR:
+                out << stat.value.i64;
+                break;
+            case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR:
+                out << stat.value.u64;
+                break;
+            case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_FLOAT64_KHR:
+                out << stat.value.f64;
+                break;
+            default:
+                out << "<unknown>";
+                break;
+            }
+            out << "\n";
+        }
+    }
+
+    return out.str();
+}
+
+std::string ComputePipeline::executableInternalRepresentationsText(const char* label, size_t maxRepresentationBytes) const
+{
+    if (!vkGetPipelineExecutablePropertiesKHR_ || !vkGetPipelineExecutableInternalRepresentationsKHR_)
+        return {};
+
+    VkPipelineInfoKHR pipelineInfo{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INFO_KHR,
+        .pipeline = impl().vkPipeline,
+    };
+
+    uint32_t executableCount = 0;
+    if (vkGetPipelineExecutablePropertiesKHR_(impl().vkDevice, &pipelineInfo, &executableCount, nullptr) != VK_SUCCESS ||
+        executableCount == 0)
+    {
+        return {};
+    }
+
+    std::vector<VkPipelineExecutablePropertiesKHR> executableProps(
+        executableCount,
+        VkPipelineExecutablePropertiesKHR{.sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR});
+    if (vkGetPipelineExecutablePropertiesKHR_(impl().vkDevice, &pipelineInfo, &executableCount, executableProps.data()) != VK_SUCCESS)
+        return {};
+
+    std::ostringstream out;
+    for (uint32_t executableIndex = 0; executableIndex < executableCount; ++executableIndex)
+    {
+        VkPipelineExecutableInfoKHR executableInfo{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR,
+            .pipeline = impl().vkPipeline,
+            .executableIndex = executableIndex,
+        };
+
+        uint32_t representationCount = 0;
+        VkResult queryResult = vkGetPipelineExecutableInternalRepresentationsKHR_(impl().vkDevice, &executableInfo, &representationCount, nullptr);
+        if (queryResult != VK_SUCCESS || representationCount == 0)
+        {
+            out << "VAI_PIPELINE_IR_UNAVAILABLE";
+            if (label && *label)
+                out << " label=" << label;
+            out << " executable=" << executableIndex
+                << " executable_name=\"" << executableProps[executableIndex].name << "\""
+                << " reason=\"" << (queryResult == VK_SUCCESS ? "no_internal_representations" : "query_failed") << "\"\n";
+            continue;
+        }
+
+        std::vector<VkPipelineExecutableInternalRepresentationKHR> representations(
+            representationCount,
+            VkPipelineExecutableInternalRepresentationKHR{.sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INTERNAL_REPRESENTATION_KHR});
+        if (vkGetPipelineExecutableInternalRepresentationsKHR_(impl().vkDevice, &executableInfo, &representationCount, representations.data()) != VK_SUCCESS)
+        {
+            out << "VAI_PIPELINE_IR_UNAVAILABLE";
+            if (label && *label)
+                out << " label=" << label;
+            out << " executable=" << executableIndex
+                << " executable_name=\"" << executableProps[executableIndex].name << "\""
+                << " reason=\"metadata_fetch_failed\"\n";
+            continue;
+        }
+
+        std::vector<std::vector<uint8_t>> blobs(representationCount);
+        for (uint32_t representationIndex = 0; representationIndex < representationCount; ++representationIndex)
+        {
+            blobs[representationIndex].resize(representations[representationIndex].dataSize);
+            representations[representationIndex].pData = blobs[representationIndex].empty()
+                ? nullptr
+                : blobs[representationIndex].data();
+        }
+
+        if (vkGetPipelineExecutableInternalRepresentationsKHR_(impl().vkDevice, &executableInfo, &representationCount, representations.data()) != VK_SUCCESS)
+        {
+            out << "VAI_PIPELINE_IR_UNAVAILABLE";
+            if (label && *label)
+                out << " label=" << label;
+            out << " executable=" << executableIndex
+                << " executable_name=\"" << executableProps[executableIndex].name << "\""
+                << " reason=\"payload_fetch_failed\"\n";
+            continue;
+        }
+
+        for (uint32_t representationIndex = 0; representationIndex < representationCount; ++representationIndex)
+        {
+            const auto& rep = representations[representationIndex];
+            out << "VAI_PIPELINE_IR";
+            if (label && *label)
+                out << " label=" << label;
+            out << " executable=" << executableIndex
+                << " representation=" << representationIndex
+                << " executable_name=\"" << executableProps[executableIndex].name << "\""
+                << " name=\"" << rep.name << "\""
+                << " description=\"" << rep.description << "\""
+                << " is_text=" << (rep.isText ? "true" : "false")
+                << " data_size=" << rep.dataSize
+                << "\n";
+
+            const size_t bytesToPrint = std::min<size_t>(rep.dataSize, maxRepresentationBytes);
+            if (rep.isText)
+            {
+                out << "BEGIN_VAI_PIPELINE_IR_TEXT\n";
+                if (rep.pData && bytesToPrint > 0)
+                    out.write(static_cast<const char*>(rep.pData), static_cast<std::streamsize>(bytesToPrint));
+                if (rep.dataSize > maxRepresentationBytes)
+                    out << "\n<TRUNCATED " << (rep.dataSize - maxRepresentationBytes) << " bytes>\n";
+                out << "\nEND_VAI_PIPELINE_IR_TEXT\n";
+            }
+            else
+            {
+                out << "  binary_data_omitted=true";
+                if (rep.dataSize > maxRepresentationBytes)
+                    out << " truncated_at=" << maxRepresentationBytes;
+                out << "\n";
+            }
+        }
+    }
+
+    return out.str();
 }
 
 
@@ -3246,8 +3917,14 @@ DescriptorSetLayout RaytracingPipeline::descSetLayout(uint32_t setId) const
 /////////////////////////////////////////////////////////////////////////////////////////
 Buffer Device::createBuffer(const BufferCreateInfo& info) 
 {
+    VkExternalMemoryBufferCreateInfo externalMemoryBufferInfo{
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
+        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT,
+    };
+
     auto vkHandle = create<VkBuffer>(impl().vkDevice, {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .pNext = info.exportMemoryWin32 ? &externalMemoryBufferInfo : nullptr,
         .size = info.size,
         .usage = (VkBufferUsageFlags)(uint32_t)info.usage,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,  // TODO: support VK_SHARING_MODE_CONCURRENT
@@ -3256,17 +3933,42 @@ Buffer Device::createBuffer(const BufferCreateInfo& info)
     auto memInfo = getMemoryAllocInfo(
         impl().vkPhysicalDevice, impl().vkDevice, vkHandle, (VkMemoryPropertyFlags)(uint32_t)info.reqMemProps);
 
-    static VkMemoryAllocateFlagsInfo flagsInfo{
+    VkExportMemoryAllocateInfo exportMemoryAllocateInfo{
+        .sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO,
+        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT,
+    };
+    void* allocationPNext = info.exportMemoryWin32 ? &exportMemoryAllocateInfo : nullptr;
+
+    VkMemoryAllocateFlagsInfo flagsInfo{
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,
+        .pNext = allocationPNext,
         .flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT
     };
 
     if ((uint32_t)info.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
         memInfo.first.pNext = &flagsInfo;
+    else
+        memInfo.first.pNext = allocationPNext;
 
     VkDeviceMemory memory = allocate<VkDeviceMemory>(impl().vkDevice, memInfo.first);
     ASSERT_SUCCESS(vkBindBufferMemory(impl().vkDevice, vkHandle, memory, 0));
 
+#ifdef EVA_ENABLE_NSIGHT_DEBUG_LABELS
+    setDebugObjectName(
+        impl().vkDevice,
+        VK_OBJECT_TYPE_BUFFER,
+        debugObjectHandle(vkHandle),
+        info.debugName.c_str());
+    if (!info.debugName.empty())
+    {
+        const std::string memoryName = info.debugName + ".memory";
+        setDebugObjectName(
+            impl().vkDevice,
+            VK_OBJECT_TYPE_DEVICE_MEMORY,
+            debugObjectHandle(memory),
+            memoryName.c_str());
+    }
+#endif
     
     auto pImpl = new Buffer::Impl(
         impl().vkDevice,
@@ -3279,6 +3981,13 @@ Buffer Device::createBuffer(const BufferCreateInfo& info)
 
     if ((uint32_t)info.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
     {
+        // @chay116: Ensure function pointer is loaded (coopmat2 or raytracing)
+        if (vkGetBufferDeviceAddressKHR_ == nullptr)
+        {
+            fprintf(stderr, "[EVA ERROR] vkGetBufferDeviceAddressKHR_ is null! "
+                    "SHADER_DEVICE_ADDRESS requires coopmat2 or raytracing support.\n");
+            EVA_ASSERT(false);
+        }
         VkBufferDeviceAddressInfo addressInfo{
             .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
             .buffer = vkHandle
@@ -3286,7 +3995,13 @@ Buffer Device::createBuffer(const BufferCreateInfo& info)
         pImpl->deviceAddress = vkGetBufferDeviceAddressKHR_(impl().vkDevice, &addressInfo);
     }
 
-    return *impl().buffers.insert(new Buffer::Impl*(pImpl)).first;
+    Buffer result = *impl().buffers.insert(new Buffer::Impl*(pImpl)).first;
+    // @chay116 - BEGIN
+    // Set cached values for inline accessors
+    result._cachedSize = info.size;
+    result._cachedUsage = info.usage;
+    // @chay116 - END
+    return result;
 }
 
 uint8_t* Buffer::map(uint64_t offset, uint64_t size)
@@ -3359,19 +4074,21 @@ void Buffer::unmap()
     impl().mappedSize = 0;
 }
 
-inline uint64_t Buffer::size() const
-{
-    return impl().size;
-}
-
-BUFFER_USAGE Buffer::usage() const
-{
-    return impl().usage;
-}
+// Note: Buffer::size() and Buffer::usage() are inline in eva-runtime.h (cached values)
 
 MEMORY_PROPERTY Buffer::memoryProperties() const
 {
     return impl().memProps;
+}
+
+void* Buffer::nativeBuffer() const
+{
+    return impl().vkBuffer;
+}
+
+void* Buffer::nativeMemory() const
+{
+    return impl().vkMemory;
 }
 
 DeviceAddress Buffer::deviceAddress() const
@@ -3524,15 +4241,15 @@ DescriptorSetLayout Device::createDescriptorSetLayout(DescriptorSetLayoutDesc de
 
     for (auto& [_, bindingInfo] : desc.bindings) 
     {
-        vkBindings.emplace_back(
-            bindingInfo.binding,
-            (VkDescriptorType)(uint32_t)bindingInfo.descriptorType,
-            bindingInfo.descriptorCount,
-            bindingInfo.stageFlags == SHADER_STAGE::NONE ? 
-                VK_SHADER_STAGE_ALL : 
+        vkBindings.push_back(VkDescriptorSetLayoutBinding{
+            .binding = bindingInfo.binding,
+            .descriptorType = (VkDescriptorType)(uint32_t)bindingInfo.descriptorType,
+            .descriptorCount = bindingInfo.descriptorCount,
+            .stageFlags = bindingInfo.stageFlags == SHADER_STAGE::NONE ?
+                VK_SHADER_STAGE_ALL :
                 (VkShaderStageFlags)(uint32_t)bindingInfo.stageFlags,
-            nullptr // TODO: support immutable samplers
-        );
+            .pImmutableSamplers = nullptr
+        }); // TODO: Clang 호환성 - emplace_back → push_back + designated initializer
     }
 
     auto vkHandle = create<VkDescriptorSetLayout>(impl().vkDevice, {
@@ -3614,6 +4331,11 @@ DescriptorSetLayout PipelineLayout::descSetLayout(uint32_t setId) const
     return impl().setLayouts.at(setId);
 }
 
+uint32_t PipelineLayout::pushConstantSize() const
+{
+    return impl().uniquePushConstant ? impl().uniquePushConstant->size : 0;
+}
+
 
 /////////////////////////////////////////////////////////////////////////////////////////
 // DescriptorPool
@@ -3644,6 +4366,7 @@ DescriptorPool Device::createDescriptorPool(const DescriptorPoolCreateInfo& info
     return *impl().descPools.insert(new DescriptorPool::Impl*(pImpl)).first;
 }
 
+
 std::vector<DescriptorSet> DescriptorPool::operator()(std::vector<DescriptorSetLayout> setLayouts)
 {
     std::vector<VkDescriptorSetLayout> vkSetLayouts(setLayouts.size());
@@ -3657,15 +4380,16 @@ std::vector<DescriptorSet> DescriptorPool::operator()(std::vector<DescriptorSetL
         .pSetLayouts = vkSetLayouts.data(),
     });
 
-    std::vector<DescriptorSet> descSets(setLayouts.size());
-    for (uint32_t i = 0; i < setLayouts.size(); ++i) 
+    std::vector<DescriptorSet> descSets;
+    descSets.reserve(setLayouts.size()); // TODO: Linux Clang 호환성 - vector(size) → reserve + push_back
+    for (uint32_t i = 0; i < setLayouts.size(); ++i)
     {
         auto pImpl = new DescriptorSet::Impl(
             vkDescSets[i],
             setLayouts[i],
             impl().device);
-            
-        descSets[i] = impl().descSets.emplace_back(new DescriptorSet::Impl*(pImpl));
+
+        descSets.push_back(impl().descSets.emplace_back(new DescriptorSet::Impl*(pImpl)));
     }
 
     return descSets;
@@ -3760,7 +4484,7 @@ DescriptorSet DescriptorSet::write(
             {
                 // bufferInfos.push_back(std::get<BufferDescriptor>(descriptors[consumedDescriptors + i]).descInfo());
                 auto& desc = std::get<BufferDescriptor>(descriptors[consumedDescriptors + i]);
-                
+
                 EVA_ASSERT(desc.buffer || impl().device.impl().features.nullDescriptor);
 
                 bufferInfos.emplace_back(
@@ -3768,7 +4492,6 @@ DescriptorSet DescriptorSet::write(
                     desc.offset,
                     desc.size
                 );
-                
             }
         }
         
@@ -3784,7 +4507,7 @@ DescriptorSet DescriptorSet::write(
             {
                 // imageInfos.push_back(std::get<ImageDescriptor>(descriptors[consumedDescriptors + i]).descInfo());
                 auto& desc = std::get<ImageDescriptor>(descriptors[consumedDescriptors + i]);
-                
+
                 if (descriptorType == DESCRIPTOR_TYPE::COMBINED_IMAGE_SAMPLER)
                 {
                     EVA_ASSERT((desc.imageView || impl().device.impl().features.nullDescriptor) && desc.sampler);
@@ -3793,13 +4516,13 @@ DescriptorSet DescriptorSet::write(
                 {
                     EVA_ASSERT(desc.imageView || impl().device.impl().features.nullDescriptor);
                 }
-                
+
                 imageInfos.emplace_back(
                     desc.sampler ? desc.sampler->impl().vkSampler : VK_NULL_HANDLE,
                     desc.imageView ? desc.imageView->impl().vkImageView : VK_NULL_HANDLE,
-                    (VkImageLayout)(uint32_t) (desc.imageLayout != IMAGE_LAYOUT::MAX_ENUM 
+                    (VkImageLayout)(uint32_t) (desc.imageLayout != IMAGE_LAYOUT::MAX_ENUM
                                                 ? desc.imageLayout : defaultLayout)
-                );
+                ); // TODO: Clang 호환성 - emplace_back → push_back + designated initializer
             }
         }
         
@@ -3876,6 +4599,11 @@ QueryPool Device::createTimestampQueryPool(uint32_t queryCount)
     return *impl().queryPools.insert(new QueryPool::Impl*(pImpl)).first;
 }
 
+QueryPool Device::createQueryPool(uint32_t queryCount)
+{
+    return createTimestampQueryPool(queryCount);
+}
+
 uint32_t QueryPool::queryCount() const
 {
     return impl().queryCount;
@@ -3884,7 +4612,7 @@ uint32_t QueryPool::queryCount() const
 void QueryPool::reset(uint32_t firstQuery, uint32_t queryCount)
 {
     EVA_ASSERT(impl().device.impl().features.hostQueryReset);
-    
+
     if (queryCount == 0)
         queryCount = impl().queryCount - firstQuery;
     vkResetQueryPool(impl().device.impl().vkDevice, impl().vkQueryPool, firstQuery, queryCount);
@@ -3977,7 +4705,7 @@ uint32_t Device::getPerformanceQueryPasses(QueueType type, const std::vector<uin
 }
 
 QueryPool Device::createPerformanceQueryPool(
-    QueueType type, 
+    QueueType type,
     const std::vector<uint32_t>& counterIndices,
     uint32_t queryCount)
 {
