@@ -41,9 +41,6 @@
 namespace eva {
     static bool gCoopMat2Supported = false;
     bool isCoopMat2Supported() { return gCoopMat2Supported; }
-
-    static bool gCudaKernelLaunchSupported = false;
-    bool isCudaKernelLaunchSupported() { return gCudaKernelLaunchSupported; }
 }
 
 #ifdef EVA_ENABLE_NSIGHT_DEBUG_LABELS
@@ -1454,74 +1451,6 @@ Device Runtime::createDevice(const DeviceSettings& settings)
 #endif
     }
 
-    // VK_NV_cuda_kernel_launch for CUDA PTX kernels in Vulkan command buffers
-    bool cuda_kernel_launch_supported = false;
-    if (settings.enableCudaKernelLaunch)
-    {
-        // Check if extension is available
-        bool cuda_ext_available = supportsExt("VK_NV_cuda_kernel_launch");
-
-        if (cuda_ext_available)
-        {
-            // Query feature support
-            // Define struct manually to avoid vulkan_beta.h dependency
-            struct VkPhysicalDeviceCudaKernelLaunchFeaturesNV_t {
-                VkStructureType sType;
-                void* pNext;
-                VkBool32 cudaKernelLaunchFeatures;
-            };
-            // VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUDA_KERNEL_LAUNCH_FEATURES_NV = 1000307003
-            VkPhysicalDeviceCudaKernelLaunchFeaturesNV_t cuda_features{};
-            cuda_features.sType = (VkStructureType)1000307003;
-            cuda_features.pNext = nullptr;
-
-            VkPhysicalDeviceFeatures2 features2_cuda{};
-            features2_cuda.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-            features2_cuda.pNext = &cuda_features;
-            vkGetPhysicalDeviceFeatures2(pd, &features2_cuda);
-
-            if (cuda_features.cudaKernelLaunchFeatures)
-            {
-                reqExtentions.push_back("VK_NV_cuda_kernel_launch");
-                cuda_kernel_launch_supported = true;
-                printf("[EVA] VK_NV_cuda_kernel_launch enabled (cudaKernelLaunchFeatures supported)\n");
-            }
-            else
-            {
-                printf("[EVA] VK_NV_cuda_kernel_launch available but cudaKernelLaunchFeatures not supported\n");
-            }
-        }
-        else
-        {
-            printf("[EVA] VK_NV_cuda_kernel_launch not available on this device\n");
-        }
-    }
-
-    if (settings.enableExternalMemoryWin32)
-    {
-        if (supportsExt("VK_KHR_external_memory_win32"))
-        {
-            reqExtentions.push_back("VK_KHR_external_memory_win32");
-            printf("[EVA] VK_KHR_external_memory_win32 enabled\n");
-        }
-        else
-        {
-            printf("[EVA] VK_KHR_external_memory_win32 not available on this device\n");
-        }
-    }
-    if (settings.enableExternalSemaphoreWin32)
-    {
-        if (supportsExt("VK_KHR_external_semaphore_win32"))
-        {
-            reqExtentions.push_back("VK_KHR_external_semaphore_win32");
-            printf("[EVA] VK_KHR_external_semaphore_win32 enabled\n");
-        }
-        else
-        {
-            printf("[EVA] VK_KHR_external_semaphore_win32 not available on this device\n");
-        }
-    }
-
     std::vector<uint32_t> qfIndices[queue_max];
     for (uint32_t i = 0; i < qfProps.size(); i++) 
     {
@@ -1700,24 +1629,6 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             printf("[EVA] coopmat2 features are unavailable in current Vulkan headers. coopmat2 disabled.\n");
 #endif
         }
-    }
-
-    // VK_NV_cuda_kernel_launch for CUDA PTX kernels
-    if (cuda_kernel_launch_supported)
-    {
-        // VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUDA_KERNEL_LAUNCH_FEATURES_NV = 1000307003
-        struct CudaKernelLaunchFeatures {
-            VkStructureType sType;
-            void* pNext;
-            VkBool32 cudaKernelLaunchFeatures;
-        };
-        CudaKernelLaunchFeatures cuda_feat{};
-        cuda_feat.sType = (VkStructureType)1000307003;
-        cuda_feat.pNext = nullptr;
-        cuda_feat.cudaKernelLaunchFeatures = VK_TRUE;
-        chain.add(cuda_feat);
-
-        eva::gCudaKernelLaunchSupported = true;
     }
 
     VkDeviceCreateInfo deviceCreateInfo{
@@ -3114,15 +3025,10 @@ bool Fence::isSignaled() const
 /////////////////////////////////////////////////////////////////////////////////////////
 // Semaphore
 /////////////////////////////////////////////////////////////////////////////////////////
-Semaphore Device::createSemaphore(bool exportWin32)
+Semaphore Device::createSemaphore()
 {
-    VkExportSemaphoreCreateInfo exportInfo{
-        .sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO,
-        .handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT,
-    };
     auto vkHandle = create<VkSemaphore>(impl().vkDevice, {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-        .pNext = exportWin32 ? &exportInfo : nullptr,
     });
 
     auto pImpl = new Semaphore::Impl(
@@ -3131,9 +3037,6 @@ Semaphore Device::createSemaphore(bool exportWin32)
 
     return *impl().semaphores.insert(new Semaphore::Impl*(pImpl)).first;
 }
-
-void* Semaphore::nativeSemaphore() const { return impl().vkSemaphore; }
-
 
 /////////////////////////////////////////////////////////////////////////////////////////
 // ShaderModule
@@ -3917,14 +3820,8 @@ DescriptorSetLayout RaytracingPipeline::descSetLayout(uint32_t setId) const
 /////////////////////////////////////////////////////////////////////////////////////////
 Buffer Device::createBuffer(const BufferCreateInfo& info) 
 {
-    VkExternalMemoryBufferCreateInfo externalMemoryBufferInfo{
-        .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
-        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT,
-    };
-
     auto vkHandle = create<VkBuffer>(impl().vkDevice, {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .pNext = info.exportMemoryWin32 ? &externalMemoryBufferInfo : nullptr,
         .size = info.size,
         .usage = (VkBufferUsageFlags)(uint32_t)info.usage,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,  // TODO: support VK_SHARING_MODE_CONCURRENT
@@ -3933,22 +3830,13 @@ Buffer Device::createBuffer(const BufferCreateInfo& info)
     auto memInfo = getMemoryAllocInfo(
         impl().vkPhysicalDevice, impl().vkDevice, vkHandle, (VkMemoryPropertyFlags)(uint32_t)info.reqMemProps);
 
-    VkExportMemoryAllocateInfo exportMemoryAllocateInfo{
-        .sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO,
-        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT,
-    };
-    void* allocationPNext = info.exportMemoryWin32 ? &exportMemoryAllocateInfo : nullptr;
-
     VkMemoryAllocateFlagsInfo flagsInfo{
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,
-        .pNext = allocationPNext,
         .flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT
     };
 
     if ((uint32_t)info.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
         memInfo.first.pNext = &flagsInfo;
-    else
-        memInfo.first.pNext = allocationPNext;
 
     VkDeviceMemory memory = allocate<VkDeviceMemory>(impl().vkDevice, memInfo.first);
     ASSERT_SUCCESS(vkBindBufferMemory(impl().vkDevice, vkHandle, memory, 0));
@@ -4084,11 +3972,6 @@ MEMORY_PROPERTY Buffer::memoryProperties() const
 void* Buffer::nativeBuffer() const
 {
     return impl().vkBuffer;
-}
-
-void* Buffer::nativeMemory() const
-{
-    return impl().vkMemory;
 }
 
 DeviceAddress Buffer::deviceAddress() const

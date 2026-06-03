@@ -46,9 +46,6 @@ typedef uint32_t SampleMask;
 // Query if VK_NV_cooperative_matrix2 extension was enabled
 bool isCoopMat2Supported();
 
-// Query if VK_NV_cuda_kernel_launch extension was enabled
-bool isCudaKernelLaunchSupported();
-
 class Runtime;
 class Device;
 class Queue;
@@ -216,9 +213,6 @@ struct DeviceSettings {
     bool enableCooperativeMatrix = false;  // VK_KHR/NV cooperative matrix for Tensor Core
     bool enablePipelineExecutableInfo = false;  // VK_KHR_pipeline_executable_properties for SASS dump
     bool enablePipelineBinaryCapture = false;  // VK_KHR_pipeline_binary capture for native pipeline payload dumps
-    bool enableCudaKernelLaunch = false;  // VK_NV_cuda_kernel_launch for CUDA PTX kernels in Vulkan
-    bool enableExternalMemoryWin32 = false;  // VK_KHR_external_memory_win32 for CUDA runtime interop smokes
-    bool enableExternalSemaphoreWin32 = false;  // VK_KHR_external_semaphore_win32 for CUDA runtime sync smokes
     // bool operator==(const DeviceSettings&) const = default;
     bool operator<=(const DeviceSettings& other) const {
         return (!enableGraphicsQueues || other.enableGraphicsQueues) &&
@@ -233,9 +227,6 @@ struct DeviceSettings {
                && (!enableCooperativeMatrix || other.enableCooperativeMatrix)
                && (!enablePipelineExecutableInfo || other.enablePipelineExecutableInfo)
                && (!enablePipelineBinaryCapture || other.enablePipelineBinaryCapture)
-               && (!enableCudaKernelLaunch || other.enableCudaKernelLaunch)
-               && (!enableExternalMemoryWin32 || other.enableExternalMemoryWin32)
-               && (!enableExternalSemaphoreWin32 || other.enableExternalSemaphoreWin32)
                ;
     }
 };
@@ -346,7 +337,7 @@ public:
     Fence createFence(bool signaled=false);
     Result waitFences(std::vector<Fence> fences, bool waitAll, uint64_t timeout=uint64_t(-1));
     void resetFences(std::vector<Fence> fences);
-    Semaphore createSemaphore(bool exportWin32=false);
+    Semaphore createSemaphore();
     // TODO: Linux Clang 호환성 - 템플릿 구현은 Semaphore 정의 뒤로 이동
     template <int N> auto createSemaphores();
 
@@ -610,7 +601,6 @@ class Semaphore {
     VULKAN_CLASS_COMMON2(Semaphore)
 public:
 
-    void* nativeSemaphore() const;
     SemaphoreStage operator()(PIPELINE_STAGE stage) const;
 
 };
@@ -688,7 +678,6 @@ class Buffer {
     // @chay116 - END
 public:
     void* nativeBuffer() const;
-    void* nativeMemory() const;
 
     uint8_t* map(
         uint64_t offset=0,
@@ -1192,7 +1181,6 @@ struct BufferCreateInfo {
     BUFFER_USAGE usage;
     MEMORY_PROPERTY reqMemProps;
     std::string debugName;
-    bool exportMemoryWin32 = false;
 };
 
 
