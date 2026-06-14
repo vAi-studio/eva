@@ -323,6 +323,11 @@ public:
     // True if the cooperativeMatrix (+ vulkanMemoryModel) feature was enabled.
     // Inspect cooperativeMatrixProperties() for a shape the kernel can use.
     bool supportsCooperativeMatrix() const;
+    // True if VK_NV_cooperative_matrix2 (workgroup-scope, flexible-dimension) was
+    // enabled. NVIDIA-only; KHR coopmat1 (supportsCooperativeMatrix) is the portable
+    // fallback on other vendors (e.g. AMD). Gate NV_coopmat2 shaders on THIS, not
+    // supportsCooperativeMatrix().
+    bool supportsCooperativeMatrix2() const;
     // Every cooperative-matrix shape reported by the device (all type combos).
     const std::vector<CooperativeMatrixProperties>& cooperativeMatrixProperties() const;
     // Device subgroup size (VkPhysicalDeviceSubgroupProperties.subgroupSize).

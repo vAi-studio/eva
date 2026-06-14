@@ -275,6 +275,7 @@ struct Device::Impl {
         bool shaderBufferFloat32AtomicAdd = false;
 
         bool cooperativeMatrix = false;
+        bool cooperativeMatrix2 = false;   // VK_NV_cooperative_matrix2 (workgroup-scope)
         bool vulkanMemoryModel = false;
         bool maintenance4 = false;
 
@@ -1180,6 +1181,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         });
         coopMat2Enabled = true;
     }
+    enabledFeatures.cooperativeMatrix2 = coopMat2Enabled;
 
     // Provided by VK_VERSION_1_3 (enables SPIR-V LocalSizeId / local_size_*_id)
     if (qMaint4.maintenance4)
@@ -1785,6 +1787,11 @@ std::vector<CommandBuffer> Device::newCommandBuffers(uint32_t count, QueueType t
 bool Device::supportsCooperativeMatrix() const
 {
     return impl().features.cooperativeMatrix;
+}
+
+bool Device::supportsCooperativeMatrix2() const
+{
+    return impl().features.cooperativeMatrix2;
 }
 
 const std::vector<Device::CooperativeMatrixProperties>& Device::cooperativeMatrixProperties() const
