@@ -1010,6 +1010,14 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR,
         });
 
+    // Provided by VK_NV_cooperative_matrix2 (workgroup-scope + flexible-dimension
+    // coopmat). KHR coopmat1 throughput is ~7x off FP16 tensor-core peak on GA102
+    // (see docs/.../precision); coopmat2 is llama.cpp's path. Depends on KHR coopmat.
+    auto* qCoopMat2 = !supportsExt(VK_NV_COOPERATIVE_MATRIX_2_EXTENSION_NAME)
+        ? nullptr : &queryChain.add(VkPhysicalDeviceCooperativeMatrix2FeaturesNV{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_2_FEATURES_NV,
+        });
+
     // Provided by VK_VERSION_1_2 (required by cooperative matrix's GL_KHR_memory_scope_semantics / VulkanMemoryModel capability)
     auto& qMemModel = queryChain.add(VkPhysicalDeviceVulkanMemoryModelFeatures{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES,
@@ -1149,6 +1157,28 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             .vulkanMemoryModel = VK_TRUE,
         });
         enabledFeatures.vulkanMemoryModel = true;
+    }
+
+    // VK_NV_cooperative_matrix2: enabled alongside KHR coopmat (depends on it).
+    // Foundation for the prefill coopmat2 GEMM path; flexible-dimension shapes are
+    // logged after device creation below.
+    bool coopMat2Enabled = false;
+    if (qCoopMat2 && enabledFeatures.cooperativeMatrix
+        && qCoopMat2->cooperativeMatrixWorkgroupScope
+        && qCoopMat2->cooperativeMatrixFlexibleDimensions)
+    {
+        reqExtentions.push_back(VK_NV_COOPERATIVE_MATRIX_2_EXTENSION_NAME);
+        chain.add(VkPhysicalDeviceCooperativeMatrix2FeaturesNV{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_2_FEATURES_NV,
+            .cooperativeMatrixWorkgroupScope = VK_TRUE,
+            .cooperativeMatrixFlexibleDimensions = VK_TRUE,
+            .cooperativeMatrixReductions = qCoopMat2->cooperativeMatrixReductions,
+            .cooperativeMatrixConversions = qCoopMat2->cooperativeMatrixConversions,
+            .cooperativeMatrixPerElementOperations = qCoopMat2->cooperativeMatrixPerElementOperations,
+            .cooperativeMatrixTensorAddressing = qCoopMat2->cooperativeMatrixTensorAddressing,
+            .cooperativeMatrixBlockLoads = qCoopMat2->cooperativeMatrixBlockLoads,
+        });
+        coopMat2Enabled = true;
     }
 
     // Provided by VK_VERSION_1_3 (enables SPIR-V LocalSizeId / local_size_*_id)
@@ -1546,6 +1576,31 @@ Device Runtime::createDevice(const DeviceSettings& settings)
                 };
                 pImpl->coopMat.shapes.push_back(s);
             }
+        }
+    }
+
+    // VK_NV_cooperative_matrix2 flexible-dimension shapes (diagnostic log). These
+    // drive the prefill coopmat2 GEMM design; KHR coopmat1 (cached above) is the
+    // ~7x-off-peak fallback.
+    if (coopMat2Enabled)
+    {
+        auto pfnFlex = (PFN_vkGetPhysicalDeviceCooperativeMatrixFlexibleDimensionsPropertiesNV)
+            vkGetInstanceProcAddr(impl().instance,
+                "vkGetPhysicalDeviceCooperativeMatrixFlexibleDimensionsPropertiesNV");
+        if (pfnFlex)
+        {
+            uint32_t count = 0;
+            pfnFlex(pd, &count, nullptr);
+            std::vector<VkCooperativeMatrixFlexibleDimensionsPropertiesNV> flex(count, {
+                .sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_FLEXIBLE_DIMENSIONS_PROPERTIES_NV,
+            });
+            pfnFlex(pd, &count, flex.data());
+            printf("[eva] VK_NV_cooperative_matrix2 enabled: %u flexible-dimension shapes\n", count);
+            for (const auto& p : flex)
+                printf("[eva]   gran M%u N%u K%u  type A%d B%d C%d R%d  scope=%d wgInv=%u\n",
+                    p.MGranularity, p.NGranularity, p.KGranularity,
+                    (int)p.AType, (int)p.BType, (int)p.CType, (int)p.ResultType,
+                    (int)p.scope, p.workgroupInvocations);
         }
     }
 
