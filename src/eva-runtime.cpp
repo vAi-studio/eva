@@ -278,6 +278,8 @@ struct Device::Impl {
         bool cooperativeMatrix2 = false;   // VK_NV_cooperative_matrix2 (workgroup-scope)
         bool vulkanMemoryModel = false;
         bool maintenance4 = false;
+        bool subgroupSizeControl = false;  // pipeline requiredSubgroupSize support
+        bool computeFullSubgroups = false; // REQUIRE_FULL_SUBGROUPS support
 
         bool hostQueryReset = false;
 #ifdef EVA_ENABLE_PERFORMANCE_QUERY
@@ -1029,6 +1031,14 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES,
     });
 
+    // Provided by VK_VERSION_1_3. Lets a pipeline pin requiredSubgroupSize and/or
+    // request full subgroups (VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT).
+    // ggml sets both on every coopmat pipeline; this is the closest controllable
+    // eva-vs-ggml difference for the coopmat2 GEMM codegen.
+    auto& qSubgroupSizeControl = queryChain.add(VkPhysicalDeviceSubgroupSizeControlFeatures{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES,
+    });
+
 #ifdef EVA_ENABLE_PERFORMANCE_QUERY
     // Provided by VK_KHR_performance_query
     auto* qPerfQuery = !supportsExt(VK_KHR_PERFORMANCE_QUERY_EXTENSION_NAME)
@@ -1192,6 +1202,21 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         });
         enabledFeatures.maintenance4 = true;
     }
+
+    // Provided by VK_VERSION_1_3: pipeline-level requiredSubgroupSize + full subgroups.
+    bool subgroupSizeControlEnabled = false;
+    if (qSubgroupSizeControl.subgroupSizeControl)
+    {
+        chain.add(VkPhysicalDeviceSubgroupSizeControlFeatures{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES,
+            .subgroupSizeControl = VK_TRUE,
+            .computeFullSubgroups = qSubgroupSizeControl.computeFullSubgroups,
+        });
+        subgroupSizeControlEnabled = true;
+    }
+    enabledFeatures.subgroupSizeControl = subgroupSizeControlEnabled;
+    enabledFeatures.computeFullSubgroups =
+        subgroupSizeControlEnabled && qSubgroupSizeControl.computeFullSubgroups;
 
     // Provided by VK_VERSION_1_2
     if (qFloat16Int8.shaderFloat16)
@@ -3081,6 +3106,17 @@ ComputePipeline Device::createComputePipeline(const ComputePipelineCreateInfo& i
     };
 
     stageInfo.pSpecializationInfo = (VkSpecializationInfo*) spec.getInfo();
+
+    // Subgroup-size control (ggml-style): full subgroups + pinned size. Only applied
+    // when the device enabled the feature, so it is a no-op (not an error) elsewhere.
+    VkPipelineShaderStageRequiredSubgroupSizeCreateInfo reqSubgroupInfo = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO,
+        .requiredSubgroupSize = info.requiredSubgroupSize,
+    };
+    if (info.requireFullSubgroups && impl().features.computeFullSubgroups)
+        stageInfo.flags |= VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT;
+    if (info.requiredSubgroupSize != 0 && impl().features.subgroupSizeControl)
+        stageInfo.pNext = &reqSubgroupInfo;
 
     VkComputePipelineCreateInfo createInfo{
         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,

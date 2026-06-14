@@ -1091,6 +1091,12 @@ struct ComputePipelineCreateInfo {
     ShaderStage csStage;
     std::optional<PipelineLayout> layout;
     bool autoLayoutAllowAllStages = false;
+    // Pipeline subgroup-size control (needs Device subgroupSizeControl feature).
+    // requiredSubgroupSize: 0 = device default; else pin (must be a supported size,
+    // e.g. 32 on NVIDIA). requireFullSubgroups: full subgroups only (ggml's coopmat
+    // setup sets both). Silently ignored if the device lacks the feature.
+    uint32_t requiredSubgroupSize = 0;
+    bool requireFullSubgroups = false;
 };
 
 
