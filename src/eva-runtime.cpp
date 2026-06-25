@@ -1130,8 +1130,11 @@ Device Runtime::createDevice(const DeviceSettings& settings)
 
     // Provided by VK_KHR_cooperative_matrix.
     // The shader's GL_KHR_memory_scope_semantics requires the Vulkan memory
-    // model, so enable both together or neither.
-    if (qCoopMat && qCoopMat->cooperativeMatrix && qMemModel.vulkanMemoryModel)
+    // model, and our shaders use device-scope barriers under that model. Enable
+    // the cooperative-matrix path only when the matching memory-model features
+    // can be enabled together.
+    if (qCoopMat && qCoopMat->cooperativeMatrix &&
+        qMemModel.vulkanMemoryModel && qMemModel.vulkanMemoryModelDeviceScope)
     {
         reqExtentions.push_back(VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);
 
@@ -1144,6 +1147,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         chain.add(VkPhysicalDeviceVulkanMemoryModelFeatures{
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES,
             .vulkanMemoryModel = VK_TRUE,
+            .vulkanMemoryModelDeviceScope = VK_TRUE,
         });
         enabledFeatures.vulkanMemoryModel = true;
     }
