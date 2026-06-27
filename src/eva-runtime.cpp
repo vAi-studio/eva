@@ -3390,7 +3390,7 @@ void Buffer::unmap()
     impl().mappedSize = 0;
 }
 
-inline uint64_t Buffer::size() const
+uint64_t Buffer::size() const
 {
     return impl().size;
 }
