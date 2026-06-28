@@ -328,6 +328,7 @@ struct Device::Impl {
     } coopMat;
 
     uint32_t subgroupSize = 0;   // VkPhysicalDeviceSubgroupProperties.subgroupSize
+    uint32_t vendorId = 0;
 
     CommandPool defaultCmdPool[queue_max][8] = {};
 
@@ -1464,6 +1465,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         };
         vkGetPhysicalDeviceProperties2(pd, &props2);
         pImpl->subgroupSize = subgroupProps.subgroupSize;
+        pImpl->vendorId = props2.properties.vendorID;
     }
 
     // Cache every cooperative-matrix shape the device reports.
@@ -1694,6 +1696,11 @@ const std::vector<Device::CooperativeMatrixProperties>& Device::cooperativeMatri
 uint32_t Device::subgroupSize() const
 {
     return impl().subgroupSize;
+}
+
+uint32_t Device::vendorId() const
+{
+    return impl().vendorId;
 }
 
 
