@@ -327,6 +327,7 @@ public:
     const std::vector<CooperativeMatrixProperties>& cooperativeMatrixProperties() const;
     // Device subgroup size (VkPhysicalDeviceSubgroupProperties.subgroupSize).
     uint32_t subgroupSize() const;
+    uint32_t vendorId() const;
 
     // Timestamp Query Pool
     bool supportsTimestampQueries() const;
