@@ -328,6 +328,9 @@ struct Device::Impl {
     } coopMat;
 
     uint32_t subgroupSize = 0;   // VkPhysicalDeviceSubgroupProperties.subgroupSize
+    uint32_t vendorID = 0;       // VkPhysicalDeviceProperties.vendorID
+    uint32_t maxComputeSharedMemorySize = 0; // VkPhysicalDeviceLimits
+    uint32_t computeUnits = 0;   // CU(AMD)/SM(NVIDIA), 0 if device exposes neither
 
     CommandPool defaultCmdPool[queue_max][8] = {};
 
@@ -1464,6 +1467,49 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         };
         vkGetPhysicalDeviceProperties2(pd, &props2);
         pImpl->subgroupSize = subgroupProps.subgroupSize;
+        pImpl->vendorID = props2.properties.vendorID;
+        pImpl->maxComputeSharedMemorySize =
+            props2.properties.limits.maxComputeSharedMemorySize;
+    }
+
+    // Compute-unit / SM count (best-effort). Vulkan core has no CU/SM count, so
+    // query the vendor property extension the device advertises (reusing the
+    // supportsExt lambda above; no second device-extension enumeration):
+    //   VK_NV_shader_sm_builtins        -> NVIDIA SM count (shaderSMCount)
+    //   VK_AMD_shader_core_properties2  -> AMD *active* CU count (preferred)
+    //   VK_AMD_shader_core_properties   -> AMD *physical* CU count
+    //       (engines*arrays/engine*CUs/array; counts disabled/harvested CUs, so
+    //        it can overcount on binned SKUs -- fallback only)
+    // Left 0 otherwise; consumers treat 0 as "unknown" and skip CU-based tuning.
+    {
+        if (supportsExt("VK_NV_shader_sm_builtins"))
+        {
+            VkPhysicalDeviceShaderSMBuiltinsPropertiesNV sm{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_SM_BUILTINS_PROPERTIES_NV };
+            VkPhysicalDeviceProperties2 p2{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &sm };
+            vkGetPhysicalDeviceProperties2(pd, &p2);
+            pImpl->computeUnits = sm.shaderSMCount;
+        }
+        else if (supportsExt("VK_AMD_shader_core_properties2"))
+        {
+            VkPhysicalDeviceShaderCoreProperties2AMD core2{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_CORE_PROPERTIES_2_AMD };
+            VkPhysicalDeviceProperties2 p2{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &core2 };
+            vkGetPhysicalDeviceProperties2(pd, &p2);
+            pImpl->computeUnits = core2.activeComputeUnitCount;
+        }
+        else if (supportsExt("VK_AMD_shader_core_properties"))
+        {
+            VkPhysicalDeviceShaderCorePropertiesAMD core{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_CORE_PROPERTIES_AMD };
+            VkPhysicalDeviceProperties2 p2{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &core };
+            vkGetPhysicalDeviceProperties2(pd, &p2);
+            pImpl->computeUnits = core.shaderEngineCount *
+                core.shaderArraysPerEngineCount * core.computeUnitsPerShaderArray;
+        }
     }
 
     // Cache every cooperative-matrix shape the device reports.
@@ -1694,6 +1740,21 @@ const std::vector<Device::CooperativeMatrixProperties>& Device::cooperativeMatri
 uint32_t Device::subgroupSize() const
 {
     return impl().subgroupSize;
+}
+
+uint32_t Device::vendorID() const
+{
+    return impl().vendorID;
+}
+
+uint32_t Device::maxComputeSharedMemorySize() const
+{
+    return impl().maxComputeSharedMemorySize;
+}
+
+uint32_t Device::computeUnits() const
+{
+    return impl().computeUnits;
 }
 
 

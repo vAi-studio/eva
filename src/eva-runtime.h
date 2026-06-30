@@ -327,6 +327,13 @@ public:
     const std::vector<CooperativeMatrixProperties>& cooperativeMatrixProperties() const;
     // Device subgroup size (VkPhysicalDeviceSubgroupProperties.subgroupSize).
     uint32_t subgroupSize() const;
+    // VkPhysicalDeviceProperties.vendorID (e.g. 0x10de NVIDIA, 0x1002 AMD).
+    uint32_t vendorID() const;
+    // VkPhysicalDeviceLimits.maxComputeSharedMemorySize (bytes).
+    uint32_t maxComputeSharedMemorySize() const;
+    // Compute-unit (AMD) / SM (NVIDIA) count; 0 if the device exposes neither
+    // VK_AMD_shader_core_properties nor VK_NV_shader_sm_builtins.
+    uint32_t computeUnits() const;
 
     // Timestamp Query Pool
     bool supportsTimestampQueries() const;
