@@ -327,6 +327,7 @@ public:
     const std::vector<CooperativeMatrixProperties>& cooperativeMatrixProperties() const;
     // Device subgroup size (VkPhysicalDeviceSubgroupProperties.subgroupSize).
     uint32_t subgroupSize() const;
+    bool supportsRequiredSubgroupSize(uint32_t subgroupSize) const;
 
     // Timestamp Query Pool
     bool supportsTimestampQueries() const;
@@ -1079,6 +1080,7 @@ struct ComputePipelineCreateInfo {
     ShaderStage csStage;
     std::optional<PipelineLayout> layout;
     bool autoLayoutAllowAllStages = false;
+    std::optional<uint32_t> requiredSubgroupSize;
 };
 
 

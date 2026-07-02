@@ -277,6 +277,7 @@ struct Device::Impl {
         bool cooperativeMatrix = false;
         bool vulkanMemoryModel = false;
         bool maintenance4 = false;
+        bool subgroupSizeControl = false;
 
         bool hostQueryReset = false;
 #ifdef EVA_ENABLE_PERFORMANCE_QUERY
@@ -328,6 +329,9 @@ struct Device::Impl {
     } coopMat;
 
     uint32_t subgroupSize = 0;   // VkPhysicalDeviceSubgroupProperties.subgroupSize
+    VkPhysicalDeviceSubgroupSizeControlProperties subgroupSizeControlProps{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_PROPERTIES,
+    };
 
     CommandPool defaultCmdPool[queue_max][8] = {};
 
@@ -1017,6 +1021,11 @@ Device Runtime::createDevice(const DeviceSettings& settings)
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES,
     });
 
+    // Provided by VK_VERSION_1_3
+    auto& qSubgroupSizeControl = queryChain.add(VkPhysicalDeviceSubgroupSizeControlFeatures{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES,
+    });
+
 #ifdef EVA_ENABLE_PERFORMANCE_QUERY
     // Provided by VK_KHR_performance_query
     auto* qPerfQuery = !supportsExt(VK_KHR_PERFORMANCE_QUERY_EXTENSION_NAME)
@@ -1050,6 +1059,15 @@ Device Runtime::createDevice(const DeviceSettings& settings)
 #endif
 
     vkGetPhysicalDeviceFeatures2(pd, &features2Query);
+
+    VkPhysicalDeviceSubgroupSizeControlProperties subgroupSizeControlProps{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_PROPERTIES,
+    };
+    VkPhysicalDeviceProperties2 subgroupSizeControlProps2{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+        .pNext = &subgroupSizeControlProps,
+    };
+    vkGetPhysicalDeviceProperties2(pd, &subgroupSizeControlProps2);
 
     // Build reqExtentions and device creation chain based on query results
     std::vector<const char*> reqExtentions;
@@ -1156,6 +1174,16 @@ Device Runtime::createDevice(const DeviceSettings& settings)
             .maintenance4 = VK_TRUE,
         });
         enabledFeatures.maintenance4 = true;
+    }
+
+    // Provided by VK_VERSION_1_3
+    if (qSubgroupSizeControl.subgroupSizeControl)
+    {
+        chain.add(VkPhysicalDeviceSubgroupSizeControlFeatures{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES,
+            .subgroupSizeControl = VK_TRUE,
+        });
+        enabledFeatures.subgroupSizeControl = true;
     }
 
     // Provided by VK_VERSION_1_2
@@ -1447,6 +1475,7 @@ Device Runtime::createDevice(const DeviceSettings& settings)
     );
     pImpl->enabledExtensions = std::move(reqExtentions);
     pImpl->features = enabledFeatures;
+    pImpl->subgroupSizeControlProps = subgroupSizeControlProps;
 
     if (!pImpl->features.synchronization2)
     {
@@ -1694,6 +1723,18 @@ const std::vector<Device::CooperativeMatrixProperties>& Device::cooperativeMatri
 uint32_t Device::subgroupSize() const
 {
     return impl().subgroupSize;
+}
+
+bool Device::supportsRequiredSubgroupSize(uint32_t subgroupSize) const
+{
+    if (!impl().features.subgroupSizeControl)
+        return false;
+    if ((impl().subgroupSizeControlProps.requiredSubgroupSizeStages & VK_SHADER_STAGE_COMPUTE_BIT) == 0)
+        return false;
+    if (subgroupSize < impl().subgroupSizeControlProps.minSubgroupSize
+        || subgroupSize > impl().subgroupSizeControlProps.maxSubgroupSize)
+        return false;
+    return subgroupSize != 0 && (subgroupSize & (subgroupSize - 1)) == 0;
 }
 
 
@@ -2805,7 +2846,6 @@ static inline uint64_t hashShaderInput(const ShaderInput& shader) noexcept
     return std::hash<uint64_t>{}(to_uint64(shader));
 }
 
-
 /////////////////////////////////////////////////////////////////////////////////////////
 // SpecializationConstant
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -2949,6 +2989,7 @@ ComputePipeline Device::createComputePipeline(const ComputePipelineCreateInfo& i
     }
 
     const auto& spec = info.csStage.specialization;
+    const uint32_t requiredSubgroupSize = info.requiredSubgroupSize.value_or(0);
     
     VkPipelineShaderStageCreateInfo stageInfo = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -2956,6 +2997,26 @@ ComputePipeline Device::createComputePipeline(const ComputePipelineCreateInfo& i
         .module = csModule.impl().vkModule,
         .pName = "main",
     };
+
+    VkPipelineShaderStageRequiredSubgroupSizeCreateInfo requiredSubgroupSizeInfo{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO,
+        .requiredSubgroupSize = requiredSubgroupSize,
+    };
+    if (requiredSubgroupSize != 0)
+    {
+        static bool warnedUnsupportedSubgroupSize = false;
+        if (supportsRequiredSubgroupSize(requiredSubgroupSize))
+        {
+            stageInfo.pNext = &requiredSubgroupSizeInfo;
+        }
+        else if (!warnedUnsupportedSubgroupSize)
+        {
+            fprintf(stderr,
+                "[EVA] requested subgroup size %u is unsupported for compute; using device default subgroup size.\n",
+                requiredSubgroupSize);
+            warnedUnsupportedSubgroupSize = true;
+        }
+    }
 
     stageInfo.pSpecializationInfo = (VkSpecializationInfo*) spec.getInfo();
 
